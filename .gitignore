@@ -28,8 +28,8 @@ data/client_secret*.json
 *.json
 
 # Binários
-!BKP_FASPEL_Setup.exe
 *.exe
+!BKP_FASPEL_Setup.exe
 *.zip
 nssm.exe
 nssm224.zip
