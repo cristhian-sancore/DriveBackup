@@ -1,0 +1,520 @@
+"""
+app.py - Servidor Flask do DriveBackup
+"""
+import os
+import sys
+import json
+import time
+import threading
+from functools import wraps
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, session
+
+import models
+import drive_client
+import backup_engine
+import scheduler
+import notificador
+
+def get_resource_path(relative_path):
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+if getattr(sys, 'frozen', False):
+    template_dir = get_resource_path('templates')
+    static_dir = get_resource_path('static')
+    app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+else:
+    app = Flask(__name__)
+app.secret_key = "drivebackup_secret_2024_fassil"
+
+# ========================
+# LOGIN & AUTENTICAÇÃO
+# ========================
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login', next=request.url))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        senha = request.form.get("senha", "")
+        if senha == "f@$p3l":
+            session["logged_in"] = True
+            flash("Login realizado com sucesso!", "success")
+            return redirect(request.args.get("next") or url_for("dashboard"))
+        else:
+            flash("Senha incorreta.", "error")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.pop("logged_in", None)
+    flash("Você saiu do sistema.", "success")
+    return redirect(url_for("login"))
+
+
+# ========================
+# DASHBOARD
+# ========================
+
+@app.route("/")
+@login_required
+def dashboard():
+    stats = models.contar_estatisticas()
+    jobs = models.listar_jobs()
+    execucoes = models.listar_execucoes(limit=5)
+    proximas = scheduler.listar_proximas_execucoes()
+
+    # Match próximas execuções aos jobs
+    proximas_map = {}
+    for p in proximas:
+        proximas_map[str(p["job_id"])] = p["proxima_execucao"]
+
+    return render_template("dashboard.html",
+                           stats=stats, jobs=jobs,
+                           execucoes=execucoes, proximas=proximas_map)
+
+
+# ========================
+# JOBS
+# ========================
+
+@app.route("/jobs")
+@login_required
+def listar_jobs_view():
+    jobs = models.listar_jobs()
+    proximas = scheduler.listar_proximas_execucoes()
+    proximas_map = {}
+    for p in proximas:
+        proximas_map[str(p["job_id"])] = p["proxima_execucao"]
+
+    # Adiciona última execução a cada job
+    for job in jobs:
+        job["ultima"] = models.obter_ultima_execucao(job["id"])
+        job["dias_semana_list"] = json.loads(job.get("dias_semana", "[]"))
+
+    return render_template("jobs.html", jobs=jobs, proximas=proximas_map)
+
+
+@app.route("/jobs/novo", methods=["GET", "POST"])
+@login_required
+def novo_job():
+    if request.method == "POST":
+        dados = _parse_job_form(request.form)
+        job_id = models.criar_job(dados)
+        job = models.obter_job(job_id)
+        scheduler.agendar_job(job)
+        flash("Job criado com sucesso!", "success")
+        return redirect(url_for("listar_jobs_view"))
+
+    config = models.obter_config()
+    drive_ok = bool(config.get("google_json_path"))
+    return render_template("job_form.html", job=None, drive_ok=drive_ok)
+
+
+@app.route("/jobs/<int:job_id>/editar", methods=["GET", "POST"])
+@login_required
+def editar_job(job_id):
+    job = models.obter_job(job_id)
+    if not job:
+        flash("Job não encontrado.", "error")
+        return redirect(url_for("listar_jobs_view"))
+
+    if request.method == "POST":
+        dados = _parse_job_form(request.form)
+        models.atualizar_job(job_id, dados)
+        job = models.obter_job(job_id)
+        scheduler.agendar_job(job)
+        flash("Job atualizado com sucesso!", "success")
+        return redirect(url_for("listar_jobs_view"))
+
+    job["dias_semana_list"] = json.loads(job.get("dias_semana", "[]"))
+    config = models.obter_config()
+    drive_ok = bool(config.get("google_json_path"))
+    return render_template("job_form.html", job=job, drive_ok=drive_ok)
+
+
+@app.route("/jobs/<int:job_id>/executar", methods=["POST"])
+@login_required
+def executar_job(job_id):
+    job = models.obter_job(job_id)
+    if not job:
+        flash("Job não encontrado.", "error")
+        return redirect(url_for("listar_jobs_view"))
+
+    backup_engine.executar_backup_async(job_id)
+    flash(f"Backup '{job['nome']}' iniciado!", "info")
+    return redirect(url_for("listar_jobs_view"))
+
+
+@app.route("/jobs/<int:job_id>/toggle", methods=["POST"])
+@login_required
+def toggle_job(job_id):
+    novo_status = models.toggle_job(job_id)
+    job = models.obter_job(job_id)
+    if job:
+        if novo_status:
+            scheduler.agendar_job(job)
+        else:
+            scheduler.remover_job(job_id)
+    return redirect(url_for("listar_jobs_view"))
+
+
+@app.route("/jobs/<int:job_id>/excluir", methods=["POST"])
+@login_required
+def excluir_job(job_id):
+    scheduler.remover_job(job_id)
+    models.excluir_job(job_id)
+    flash("Job excluído.", "success")
+    return redirect(url_for("listar_jobs_view"))
+
+
+def _parse_job_form(form):
+    dias = form.getlist("dias_semana")
+    return {
+        "nome": form.get("nome", "").strip(),
+        "pasta_origem": form.get("pasta_origem", "").strip(),
+        "destino_tipo": form.get("destino_tipo", "local"),
+        "destino_drive_id": form.get("destino_drive_id", "").strip() or None,
+        "destino_drive_nome": form.get("destino_drive_nome", "").strip() or None,
+        "destino_local": form.get("destino_local", "").strip() or None,
+        "dias_semana": dias,
+        "horario": form.get("horario", "22:00").strip()
+    }
+
+
+# ========================
+# LOGS
+# ========================
+
+@app.route("/logs")
+@login_required
+def logs_view():
+    execucoes = models.listar_execucoes(limit=100)
+    return render_template("logs.html", execucoes=execucoes)
+
+
+# ========================
+# CONFIGURAÇÕES
+# ========================
+
+@app.route("/settings", methods=["GET", "POST"])
+@login_required
+def settings_view():
+    if request.method == "POST":
+        dados = {
+            "google_json_path": request.form.get("google_json_path", "").strip(),
+            "evolution_url": request.form.get("evolution_url", "").strip(),
+            "evolution_instance": request.form.get("evolution_instance", "").strip(),
+            "evolution_apikey": request.form.get("evolution_apikey", "").strip(),
+            "whatsapp_destino": request.form.get("whatsapp_destino", "").strip(),
+        }
+        models.salvar_config(dados)
+        flash("Configurações salvas!", "success")
+        return redirect(url_for("settings_view"))
+
+    config = models.obter_config()
+    return render_template("settings.html", config=config)
+
+
+@app.route("/settings/testar-drive", methods=["POST"])
+@login_required
+def testar_drive():
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    ok, msg = drive_client.testar_conexao(json_path)
+    return jsonify({"ok": ok, "mensagem": msg})
+
+
+@app.route("/settings/testar-whatsapp", methods=["POST"])
+@login_required
+def testar_whatsapp():
+    config = models.obter_config()
+    ok = notificador.testar_notificacao(config)
+    return jsonify({"ok": ok, "mensagem": "Mensagem enviada!" if ok else "Falha ao enviar."})
+
+
+# ========================
+# API - Manutenção do Sistema
+# ========================
+
+@app.route("/api/sistema/atualizar", methods=["POST"])
+@login_required
+def api_sistema_atualizar():
+    """Executa o git pull para atualizar o código/binário."""
+    try:
+        import subprocess
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        # Tenta rodar o git pull
+        process = subprocess.run(["git", "pull", "origin", "main"], 
+                                cwd=base_dir, capture_output=True, text=True)
+        
+        if process.returncode != 0:
+            return jsonify({"ok": False, "mensagem": f"Erro Git: {process.stderr or process.stdout}"})
+            
+        stdout = process.stdout
+        if "Already up to date" in stdout or "Já está atualizado" in stdout:
+            return jsonify({"ok": True, "atualizado": False, "mensagem": "O sistema já está na versão mais atual."})
+            
+        return jsonify({"ok": True, "atualizado": True, "mensagem": "Atualização baixada com sucesso! Clique em 'Reiniciar' para aplicar."})
+    except Exception as e:
+        return jsonify({"ok": False, "mensagem": f"Erro interno: {str(e)}"})
+
+
+@app.route("/api/sistema/reiniciar", methods=["POST"])
+@login_required
+def api_sistema_reiniciar():
+    """Reinicia o serviço do Windows via arquivo BAT temporário."""
+    try:
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        bat_path = os.path.join(base_dir, "restart_app.bat")
+        service_name = "BKP_FASPEL"
+        
+        content = f"""@echo off
+echo Reiniciando o servico...
+timeout /t 3 /nobreak > nul
+net stop {service_name}
+timeout /t 2 /nobreak > nul
+net start {service_name}
+exit
+"""
+        with open(bat_path, "w") as f:
+            f.write(content)
+            
+        import subprocess
+        subprocess.Popen([bat_path], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        
+        return jsonify({"ok": True, "mensagem": "Comando de reinício enviado. O sistema ficará offline brevemente."})
+    except Exception as e:
+        return jsonify({"ok": False, "mensagem": f"Falha ao agendar reinício: {str(e)}"})
+
+
+# ========================
+# API - Google Drive (AJAX)
+# ========================
+
+@app.route("/api/drive/pastas")
+@login_required
+def api_drive_pastas():
+    parent_id = request.args.get("parent_id", "root")
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    if not json_path:
+        return jsonify({"erro": "Credenciais do Google Drive não configuradas.", "pastas": []})
+
+    try:
+        pastas = drive_client.listar_pastas(json_path, parent_id if parent_id != "root" else None)
+        return jsonify({"pastas": pastas, "erro": None})
+    except Exception as e:
+        return jsonify({"erro": str(e), "pastas": []})
+
+
+@app.route("/api/drive/arvore")
+@login_required
+def api_drive_arvore():
+    """Retorna a árvore COMPLETA de pastas do Drive em hierarquia."""
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    if not json_path:
+        return jsonify({"erro": "Credenciais do Google Drive não configuradas.", "arvore": []})
+
+    try:
+        arvore = drive_client.listar_arvore_completa(json_path)
+        return jsonify({"arvore": arvore, "erro": None})
+    except Exception as e:
+        return jsonify({"erro": str(e), "arvore": []})
+
+
+@app.route("/api/drive/criar-pasta", methods=["POST"])
+@login_required
+def api_drive_criar_pasta():
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    nome = request.json.get("nome", "")
+    parent_id = request.json.get("parent_id")
+
+    if not json_path:
+        return jsonify({"erro": "Credenciais não configuradas."})
+    if not nome:
+        return jsonify({"erro": "Nome da pasta é obrigatório."})
+
+    try:
+        pasta = drive_client.criar_pasta(json_path, nome, parent_id)
+        return jsonify({"pasta": pasta, "erro": None})
+    except Exception as e:
+        return jsonify({"erro": str(e)})
+
+
+# ========================
+# API - Explorador Local
+# ========================
+
+@app.route("/api/local/explorar")
+@login_required
+def api_local_explorar():
+    import string
+    caminho = request.args.get("path", "").strip()
+    
+    # Se vazio, lista os discos do Windows
+    if not caminho:
+        discos = []
+        for letra in string.ascii_uppercase:
+            disco = f"{letra}:\\"
+            if os.path.exists(disco):
+                discos.append({"nome": disco, "caminho": disco, "tipo": "dir"})
+        return jsonify({"itens": discos, "caminho_atual": ""})
+    
+    # Se houver caminho, lista o conteúdo do diretório
+    if not os.path.exists(caminho):
+        return jsonify({"erro": "Caminho não encontrado.", "itens": [], "caminho_atual": caminho})
+    
+    if not os.path.isdir(caminho):
+        return jsonify({"erro": "O caminho não é uma pasta.", "itens": [], "caminho_atual": caminho})
+
+    try:
+        itens = []
+        for nome in os.listdir(caminho):
+            caminho_completo = os.path.join(caminho, nome)
+            try:
+                tipo = "dir" if os.path.isdir(caminho_completo) else "file"
+                itens.append({"nome": nome, "caminho": caminho_completo, "tipo": tipo})
+            except Exception:
+                # Ignora arquivos sem permissão de leitura
+                pass
+        
+        # Ordena: pastas primeiro, depois arquivos alfabeticamente
+        itens.sort(key=lambda x: (x["tipo"] == "file", x["nome"].lower()))
+        
+        return jsonify({"itens": itens, "caminho_atual": caminho, "erro": None})
+    except PermissionError:
+        return jsonify({"erro": "Acesso negado a esta pasta.", "itens": [], "caminho_atual": caminho})
+    except Exception as e:
+        return jsonify({"erro": str(e), "itens": [], "caminho_atual": caminho})
+
+
+# ========================
+# SSE - Progresso em tempo real
+# ========================
+
+@app.route("/api/progresso/<int:job_id>")
+@login_required
+def api_progresso(job_id):
+    def stream():
+        while True:
+            prog = backup_engine.get_progresso(job_id)
+            yield f"data: {json.dumps(prog)}\n\n"
+            if prog["etapa"] in ("concluido", "erro", "idle"):
+                break
+            time.sleep(1)
+
+    return Response(stream(), mimetype="text/event-stream")
+
+
+# ========================
+# INICIALIZAÇÃO
+# ========================
+
+def inicializar():
+    """Inicializa banco e agendador."""
+    models.init_db()
+    scheduler.carregar_todos_jobs()
+    print("=" * 50)
+    print("  DriveBackup - Sistema de Backup")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    if getattr(sys, 'frozen', False) and "--service-run" not in sys.argv:
+        # ==== MODO INSTALADOR (EXE duplo clique) ====
+        import shutil
+        import subprocess
+        
+        PASTA_DESTINO = r"C:\BKP_FASPEL"
+        NOME_SERVICO = "BKP_FASPEL"
+        
+        print("="*50)
+        print("     INSTALADOR - DRIVEBACKUP FASPEL")
+        print("="*50)
+        print(f"[*] Preparando ambiente em {PASTA_DESTINO}...")
+        os.makedirs(PASTA_DESTINO, exist_ok=True)
+        
+        exe_destino = os.path.join(PASTA_DESTINO, "BKP_FASPEL.exe")
+        nssm_origem = os.path.join(sys._MEIPASS, "nssm.exe")
+        nssm_destino = os.path.join(PASTA_DESTINO, "nssm.exe")
+        uninst_origem = os.path.join(sys._MEIPASS, "Desinstalar_BKP.exe")
+        uninst_destino = os.path.join(PASTA_DESTINO, "Desinstalar_BKP.exe")
+        
+        try:
+            print("[*] Copiando sistema...")
+            shutil.copy2(sys.executable, exe_destino)
+            shutil.copy2(nssm_origem, nssm_destino)
+            if os.path.exists(uninst_origem):
+                shutil.copy2(uninst_origem, uninst_destino)
+            
+            # Copia a pasta data (banco de dados e token.json) que vai vim embutida no EXE
+            pasta_dados_origem = os.path.join(sys._MEIPASS, "data")
+            pasta_dados_destino = os.path.join(PASTA_DESTINO, "data")
+            if os.path.exists(pasta_dados_origem):
+                os.makedirs(pasta_dados_destino, exist_ok=True)
+                for item in os.listdir(pasta_dados_origem):
+                    s = os.path.join(pasta_dados_origem, item)
+                    d = os.path.join(pasta_dados_destino, item)
+                    if os.path.isfile(s):
+                        # Só copia se o arquivo não existir ou se for o token.json (para atualizar o acesso)
+                        if not os.path.exists(d) or item == "token.json":
+                            shutil.copy2(s, d)
+                    elif os.path.isdir(s):
+                        if not os.path.exists(d):
+                            shutil.copytree(s, d)
+            
+            print("[*] Arquivos instalados!")
+        except Exception as e:
+            print(f"[X] Erro critico ao copiar arquivos: {e}")
+            input("Pressione ENTER para sair...")
+            sys.exit(1)
+            
+        print("[*] Instalando Servico do Windows...")
+        # Para e remove se o servico ja existir
+        subprocess.run([nssm_destino, "stop", NOME_SERVICO], capture_output=True)
+        subprocess.run([nssm_destino, "remove", NOME_SERVICO, "confirm"], capture_output=True)
+        
+        # Cria e configura servico via NSSM no services.msc
+        subprocess.run([nssm_destino, "install", NOME_SERVICO, exe_destino, "--service-run"])
+        subprocess.run([nssm_destino, "set", NOME_SERVICO, "AppDirectory", PASTA_DESTINO])
+        subprocess.run([nssm_destino, "set", NOME_SERVICO, "Description", "Sistema automatizado de Backup Faspel (DriveBackup)"])
+        subprocess.run([nssm_destino, "set", NOME_SERVICO, "Start", "SERVICE_AUTO_START"])
+        
+        print("[*] Iniciando o Servico pela primeira vez...")
+        subprocess.run([nssm_destino, "start", NOME_SERVICO])
+        
+        print()
+        print("==================================================")
+        print("   INSTALACAO CONCLUIDA COM SUCESSO! ")
+        print("   Acesse o painel web no link: http://localhost:5555")
+        print("==================================================")
+        input("Pressione ENTER para fechar essa janela...")
+        sys.exit(0)
+
+    # ==== MODO SERVIDOR (Rotina Normal via --service-run ou DEV) ====
+    inicializar()
+    config = models.obter_config()
+    porta = int(config.get("porta_servidor", 5555))
+    print(f"  Painel: http://localhost:{porta}")
+    print("=" * 50)
+    app.run(host="0.0.0.0", port=porta, debug=False)

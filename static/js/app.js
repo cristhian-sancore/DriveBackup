@@ -1,0 +1,55 @@
+/**
+ * app.js - DriveBackup Frontend
+ */
+
+// ===== Relógio no topbar =====
+function atualizarRelogio() {
+    const el = document.getElementById('current-time');
+    if (!el) return;
+    const now = new Date();
+    const opts = { 
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    };
+    el.textContent = now.toLocaleDateString('pt-BR', opts);
+}
+atualizarRelogio();
+setInterval(atualizarRelogio, 1000);
+
+// ===== Auto-hide flash messages =====
+document.addEventListener('DOMContentLoaded', function() {
+    const flashes = document.querySelectorAll('.flash-message');
+    flashes.forEach(flash => {
+        setTimeout(() => {
+            flash.style.transition = 'opacity 0.5s, transform 0.5s';
+            flash.style.opacity = '0';
+            flash.style.transform = 'translateY(-10px)';
+            setTimeout(() => flash.remove(), 500);
+        }, 5000);
+    });
+});
+
+// ===== Confirmação de exclusão aprimorada =====
+document.querySelectorAll('form[onsubmit]').forEach(form => {
+    // já tem onsubmit inline
+});
+
+// ===== SSE Progresso (para uso futuro na página de jobs) =====
+function monitorarProgresso(jobId, callback) {
+    const source = new EventSource(`/api/progresso/${jobId}`);
+    
+    source.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        callback(data);
+        
+        if (data.etapa === 'concluido' || data.etapa === 'erro' || data.etapa === 'idle') {
+            source.close();
+        }
+    };
+    
+    source.onerror = function() {
+        source.close();
+    };
+    
+    return source;
+}

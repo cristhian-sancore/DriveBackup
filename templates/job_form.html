@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+
+{% block title %}{% if job %}Editar{% else %}Novo{% endif %} Job - DriveBackup{% endblock %}
+{% block page_title %}{% if job %}Editar Job{% else %}Novo Job de Backup{% endif %}{% endblock %}
+
+{% block content %}
+<div class="card form-card">
+    <div class="card-body">
+        <form method="POST" id="job-form">
+            <!-- Nome -->
+            <div class="form-group">
+                <label for="nome"><i class="fas fa-tag"></i> Nome do Job</label>
+                <input type="text" id="nome" name="nome" class="form-control" required
+                       placeholder="Ex: Backup Diário - Sistema"
+                       value="{{ job.nome if job else '' }}">
+            </div>
+
+            <!-- Pasta de Origem -->
+            <div class="form-group">
+                <label for="pasta_origem"><i class="fas fa-folder-open"></i> Origem (Arquivos ou Pastas)</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="pasta_origem" name="pasta_origem" class="form-control" required
+                           placeholder="Ex: C:\Dados\MeuSistema ou C:\arquivo1.txt|C:\arquivo2.txt"
+                           value="{{ job.pasta_origem if job else '' }}">
+                    <button type="button" class="btn btn-primary" onclick="abrirNavegadorLocal('origin')" style="white-space:nowrap;">
+                        <i class="fas fa-search"></i> Procurar
+                    </button>
+                </div>
+                <small class="form-hint">Caminho do arquivo ou pasta. Vários caminhos são separados por <strong>|</strong></small>
+            </div>
+
+            <!-- Tipo de Destino -->
+            <div class="form-group">
+                <label><i class="fas fa-bullseye"></i> Destino do Backup</label>
+                <div class="radio-cards">
+                    <label class="radio-card">
+                        <input type="radio" name="destino_tipo" value="local"
+                               {% if not job or job.destino_tipo == 'local' %}checked{% endif %}
+                               onchange="toggleDestino()">
+                        <div class="radio-card-content">
+                            <i class="fas fa-hdd"></i>
+                            <span>Local</span>
+                            <small>Pasta no computador</small>
+                        </div>
+                    </label>
+                    <label class="radio-card">
+                        <input type="radio" name="destino_tipo" value="drive"
+                               {% if job and job.destino_tipo == 'drive' %}checked{% endif %}
+                               onchange="toggleDestino()" {% if not drive_ok %}disabled{% endif %}>
+                        <div class="radio-card-content">
+                            <i class="fas fa-cloud"></i>
+                            <span>Google Drive</span>
+                            <small>{% if drive_ok %}Nuvem{% else %}Configure nas Configurações{% endif %}</small>
+                        </div>
+                    </label>
+                    <label class="radio-card">
+                        <input type="radio" name="destino_tipo" value="ambos"
+                               {% if job and job.destino_tipo == 'ambos' %}checked{% endif %}
+                               onchange="toggleDestino()" {% if not drive_ok %}disabled{% endif %}>
+                        <div class="radio-card-content">
+                            <i class="fas fa-arrows-alt"></i>
+                            <span>Ambos</span>
+                            <small>{% if drive_ok %}Local + Drive{% else %}Configure o Drive{% endif %}</small>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Destino Local -->
+            <div class="form-group" id="destino-local-group">
+                <label for="destino_local"><i class="fas fa-hdd"></i> Pasta de Destino Local</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="destino_local" name="destino_local" class="form-control"
+                           placeholder="Ex: D:\Backups"
+                           value="{{ job.destino_local if job and job.destino_local else '' }}">
+                    <button type="button" class="btn btn-secondary" onclick="abrirNavegadorLocal('dest')" style="white-space:nowrap;">
+                        <i class="fas fa-search"></i> Explorar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Destino Drive -->
+            <div class="form-group" id="destino-drive-group" style="display:none;">
+                <label><i class="fas fa-cloud"></i> Pasta de Destino no Google Drive</label>
+                <div class="drive-browser">
+                    <div class="drive-selected" id="drive-selected">
+                        {% if job and job.destino_drive_nome %}
+                            <i class="fas fa-folder" style="color:#fbbf24;"></i> {{ job.destino_drive_nome }}
+                        {% else %}
+                            <span class="text-muted">Nenhuma pasta selecionada</span>
+                        {% endif %}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="abrirNavegadorDrive()">
+                        <i class="fas fa-folder-tree"></i> Selecionar Pasta
+                    </button>
+                </div>
+                <input type="hidden" id="destino_drive_id" name="destino_drive_id"
+                       value="{{ job.destino_drive_id if job else '' }}">
+                <input type="hidden" id="destino_drive_nome" name="destino_drive_nome"
+                       value="{{ job.destino_drive_nome if job else '' }}">
+            </div>
+
+            <!-- Agendamento - Dias da Semana -->
+            <div class="form-group">
+                <label><i class="fas fa-calendar-days"></i> Dias da Semana</label>
+                <div class="weekday-selector">
+                    {% set dias = [('seg','Seg'),('ter','Ter'),('qua','Qua'),('qui','Qui'),('sex','Sex'),('sab','Sáb'),('dom','Dom')] %}
+                    {% set dias_selecionados = job.dias_semana_list if job and job.dias_semana_list else [] %}
+                    {% for valor, label in dias %}
+                    <label class="weekday-btn">
+                        <input type="checkbox" name="dias_semana" value="{{ valor }}"
+                               {% if valor in dias_selecionados %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Horário -->
+            <div class="form-group">
+                <label for="horario"><i class="fas fa-clock"></i> Horário</label>
+                <input type="time" id="horario" name="horario" class="form-control form-control-time"
+                       value="{{ job.horario if job else '22:00' }}">
+            </div>
+
+            <!-- Botões -->
+            <div class="form-actions">
+                <a href="{{ url_for('listar_jobs_view') }}" class="btn btn-ghost">
+                    <i class="fas fa-arrow-left"></i> Cancelar
+                </a>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> {% if job %}Salvar Alterações{% else %}Criar Job{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Local Browser (Seletor do Windows) -->
+<div class="modal-overlay" id="local-modal" style="display:none;" onclick="fecharModalLocal(event)">
+    <div class="modal modal-lg" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="local-modal-title"><i class="fas fa-folder-open" style="color:var(--color-primary);"></i> Selecionar Computador</h3>
+            <button class="modal-close" onclick="fecharModalLocal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div style="margin-bottom: 8px; font-size: 0.9rem; background: var(--bg-surface); padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border-color);">
+                <i class="fas fa-map-marker-alt" style="color: var(--text-muted); margin-right: 6px;"></i> 
+                <strong id="local-current-path">Este Computador</strong>
+            </div>
+            <div class="drive-tree-container" id="local-tree-container" style="height: 300px;">
+                <!-- Itens carregados via script -->
+            </div>
+            
+            <div id="local-selected-list" style="margin-top: 15px; display: none;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong><i class="fas fa-list-check"></i> Itens Selecionados:</strong>
+                    <button class="btn btn-sm btn-secondary" onclick="adicionarPastaAtualAsOrigens()">
+                        <i class="fas fa-plus"></i> Add Pasta Atual
+                    </button>
+                </div>
+                <div id="local-selected-ul" style="max-height: 100px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 4px; background: var(--bg-surface);">
+                    <div class="text-muted" style="padding:4px 8px; font-size:0.85rem;">Nenhum item adicionado</div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <div></div> <!-- Espaçador -->
+            <div>
+                <button class="btn btn-ghost" onclick="fecharModalLocal()">Cancelar</button>
+                <button class="btn btn-primary" id="btn-selecionar-local" onclick="confirmarSelecaoLocal()" disabled>
+                    <i class="fas fa-check"></i> Confirmar Seleção
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Drive Browser - Árvore Hierárquica -->
+<div class="modal-overlay" id="drive-modal" style="display:none;" onclick="fecharModalDrive(event)">
+    <div class="modal modal-lg" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3><i class="fab fa-google-drive" style="color:#fbbf24;"></i> Selecionar Pasta do Google Drive</h3>
+            <button class="modal-close" onclick="fecharModalDrive()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="drive-tree-container" id="drive-tree-container">
+                <div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Carregando pastas do Google Drive...</div>
+            </div>
+            <div class="drive-new-folder" style="margin-top:12px;">
+                <input type="text" id="nova-pasta-nome" placeholder="Nome da nova pasta" class="form-control">
+                <button type="button" class="btn btn-sm btn-primary" onclick="criarPastaDrive()">
+                    <i class="fas fa-folder-plus"></i> Criar Pasta
+                </button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <div class="drive-selected-info" id="drive-selected-info">
+                <span class="text-muted">Nenhuma pasta selecionada</span>
+            </div>
+            <div>
+                <button class="btn btn-ghost" onclick="fecharModalDrive()">Cancelar</button>
+                <button class="btn btn-primary" id="btn-selecionar-pasta" onclick="confirmarSelecao()" disabled>
+                    <i class="fas fa-check"></i> Selecionar Esta Pasta
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* ===== Tree View Styles ===== */
+.drive-tree-container {
+    max-height: 450px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 8px 0;
+    background: var(--bg-input);
+}
+
+.tree-node {
+    user-select: none;
+}
+
+.tree-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+
+.tree-item:hover {
+    background: var(--bg-surface-hover);
+}
+
+.tree-item.selected {
+    background: rgba(102, 126, 234, 0.15);
+    color: var(--color-primary-hover);
+}
+
+.tree-toggle {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform 0.2s;
+}
+
+.tree-toggle.expanded {
+    transform: rotate(90deg);
+}
+
+.tree-toggle.empty {
+    visibility: hidden;
+}
+
+.tree-folder-icon {
+    color: #fbbf24;
+    font-size: 0.95rem;
+    flex-shrink: 0;
+}
+
+.tree-folder-icon.open {
+    color: #f59e0b;
+}
+
+.tree-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-children {
+    display: none;
+    padding-left: 20px;
+}
+
+.tree-children.expanded {
+    display: block;
+}
+
+.modal-lg {
+    width: 640px;
+}
+
+.modal-footer {
+    justify-content: space-between !important;
+    align-items: center;
+}
+
+.modal-footer > div {
+    display: flex;
+    gap: 10px;
+}
+
+.drive-selected-info {
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.drive-selected-info i {
+    color: #fbbf24;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let driveSelectedFolder = null;
+    let driveTreeData = null;
+
+    function toggleDestino() {
+        const tipo = document.querySelector('input[name="destino_tipo"]:checked').value;
+        document.getElementById('destino-local-group').style.display =
+            (tipo === 'local' || tipo === 'ambos') ? 'block' : 'none';
+        document.getElementById('destino-drive-group').style.display =
+            (tipo === 'drive' || tipo === 'ambos') ? 'block' : 'none';
+    }
+
+    // Inicializar
+    toggleDestino();
+
+    // ========== Drive Tree Browser ==========
+    function abrirNavegadorDrive() {
+        document.getElementById('drive-modal').style.display = 'flex';
+        carregarArvoreDrive();
+    }
+
+    function fecharModalDrive(e) {
+        if (e && e.target !== e.currentTarget) return;
+        document.getElementById('drive-modal').style.display = 'none';
+    }
+
+    function carregarArvoreDrive() {
+        const container = document.getElementById('drive-tree-container');
+        container.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Carregando pastas do Google Drive...</div>';
+        driveSelectedFolder = null;
+        atualizarSelecaoInfo();
+
+        fetch('/api/drive/arvore')
+            .then(r => r.json())
+            .then(data => {
+                if (data.erro) {
+                    container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>' + data.erro + '</p></div>';
+                    return;
+                }
+                if (!data.arvore || data.arvore.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><i class="fas fa-folder-open"></i><p>Nenhuma pasta encontrada.<br>Compartilhe uma pasta do Drive com a conta de serviço.</p></div>';
+                    return;
+                }
+                driveTreeData = data.arvore;
+                container.innerHTML = '';
+                renderizarArvore(data.arvore, container, 0);
+            })
+            .catch(err => {
+                container.innerHTML = '<div class="empty-state"><i class="fas fa-bug"></i><p>Erro: ' + err + '</p></div>';
+            });
+    }
+
+    function renderizarArvore(nodes, parentEl, depth) {
+        nodes.forEach(node => {
+            const treeNode = document.createElement('div');
+            treeNode.className = 'tree-node';
+
+            const item = document.createElement('div');
+            item.className = 'tree-item';
+            item.style.paddingLeft = (12 + depth * 20) + 'px';
+            item.dataset.id = node.id;
+            item.dataset.name = node.name;
+
+            // Toggle arrow
+            const toggle = document.createElement('span');
+            toggle.className = 'tree-toggle' + (node.children.length === 0 ? ' empty' : '');
+            toggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+
+            // Folder icon
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-folder tree-folder-icon';
+
+            // Name
+            const name = document.createElement('span');
+            name.className = 'tree-name';
+            name.textContent = node.name;
+
+            item.appendChild(toggle);
+            item.appendChild(icon);
+            item.appendChild(name);
+            treeNode.appendChild(item);
+
+            // Children container
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'tree-children';
+            
+            if (node.children.length > 0) {
+                renderizarArvore(node.children, childrenContainer, depth + 1);
+            }
+            treeNode.appendChild(childrenContainer);
+
+            // Click on toggle → expand/collapse
+            toggle.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (node.children.length === 0) return;
+                const isExpanded = childrenContainer.classList.contains('expanded');
+                childrenContainer.classList.toggle('expanded');
+                toggle.classList.toggle('expanded');
+                icon.className = isExpanded ? 'fas fa-folder tree-folder-icon' : 'fas fa-folder-open tree-folder-icon open';
+            });
+
+            // Click on item → select
+            item.addEventListener('click', function() {
+                // Deselect all
+                document.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+                item.classList.add('selected');
+                driveSelectedFolder = { id: node.id, name: node.name };
+                atualizarSelecaoInfo();
+            });
+
+            // Double click → expand
+            item.addEventListener('dblclick', function() {
+                if (node.children.length > 0) {
+                    childrenContainer.classList.add('expanded');
+                    toggle.classList.add('expanded');
+                    icon.className = 'fas fa-folder-open tree-folder-icon open';
+                }
+            });
+
+            parentEl.appendChild(treeNode);
+        });
+    }
+
+    function atualizarSelecaoInfo() {
+        const infoEl = document.getElementById('drive-selected-info');
+        const btnEl = document.getElementById('btn-selecionar-pasta');
+        if (driveSelectedFolder) {
+            infoEl.innerHTML = '<i class="fas fa-folder"></i> <strong>' + driveSelectedFolder.name + '</strong>';
+            btnEl.disabled = false;
+        } else {
+            infoEl.innerHTML = '<span class="text-muted">Nenhuma pasta selecionada</span>';
+            btnEl.disabled = true;
+        }
+    }
+
+    function confirmarSelecao() {
+        if (!driveSelectedFolder) return;
+        document.getElementById('destino_drive_id').value = driveSelectedFolder.id;
+        document.getElementById('destino_drive_nome').value = driveSelectedFolder.name;
+        document.getElementById('drive-selected').innerHTML =
+            '<i class="fas fa-folder" style="color:#fbbf24;"></i> ' + driveSelectedFolder.name;
+        fecharModalDrive();
+    }
+
+    function criarPastaDrive() {
+        const nome = document.getElementById('nova-pasta-nome').value.trim();
+        if (!nome) return;
+
+        // Se uma pasta está selecionada, cria dentro dela
+        const parentId = driveSelectedFolder ? driveSelectedFolder.id : null;
+
+        fetch('/api/drive/criar-pasta', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({nome: nome, parent_id: parentId})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.erro) {
+                alert('Erro: ' + data.erro);
+                return;
+            }
+            document.getElementById('nova-pasta-nome').value = '';
+            // Recarrega a árvore
+            carregarArvoreDrive();
+        });
+    }
+
+    // ========== Local File Browser ==========
+    let localCurrentPath = '';
+    let localSelectionMode = 'origin'; // 'origin' (múltiplos) ou 'dest' (único diretório)
+    let localSelectedItems = []; // Array de caminhos selecionados
+
+    function abrirNavegadorLocal(modo) {
+        localSelectionMode = modo;
+        localSelectedItems = [];
+        document.getElementById('local-modal').style.display = 'flex';
+        
+        let initialPath = '';
+        if (modo === 'origin') {
+            document.getElementById('local-modal-title').innerHTML = '<i class="fas fa-folder-open" style="color:var(--color-primary);"></i> Selecionar Origens';
+            document.getElementById('local-selected-list').style.display = 'block';
+            document.getElementById('btn-selecionar-local').innerHTML = '<i class="fas fa-check"></i> Confirmar Origens';
+        } else {
+            document.getElementById('local-modal-title').innerHTML = '<i class="fas fa-hdd" style="color:var(--color-primary);"></i> Selecionar Destino Local';
+            document.getElementById('local-selected-list').style.display = 'none';
+            document.getElementById('btn-selecionar-local').innerHTML = '<i class="fas fa-check"></i> Confirmar Destino';
+            const atual = document.getElementById('destino_local').value;
+            if (atual) initialPath = atual;
+        }
+        
+        atualizarListaLocalUI();
+        carregarItensLocais(initialPath);
+    }
+
+    function fecharModalLocal(e) {
+        if (e && e.target !== e.currentTarget) return;
+        document.getElementById('local-modal').style.display = 'none';
+    }
+
+    function carregarItensLocais(caminho) {
+        const container = document.getElementById('local-tree-container');
+        container.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Carregando local...</div>';
+        
+        document.getElementById('local-current-path').textContent = caminho || 'Este Computador';
+
+        fetch('/api/local/explorar?path=' + encodeURIComponent(caminho))
+            .then(r => r.json())
+            .then(data => {
+                if (data.erro) {
+                    container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>' + data.erro + '</p><button class="btn btn-sm btn-ghost" onclick="carregarItensLocais(\'\')">Voltar ao Início</button></div>';
+                    return;
+                }
+                
+                localCurrentPath = data.caminho_atual;
+                container.innerHTML = '';
+                
+                // Botão de subir (se não estiver na raiz)
+                if (localCurrentPath) {
+                    const itemUp = document.createElement('div');
+                    itemUp.className = 'tree-item';
+                    itemUp.innerHTML = '<i class="fas fa-level-up-alt text-muted"></i> <span class="tree-name text-muted">.. (Subir um nível)</span>';
+                    
+                    itemUp.addEventListener('click', function() {
+                        // Calcula caminho pai (ex: C:\pasta\sub -> C:\pasta)
+                        let partes = localCurrentPath.replace(/\\$/, "").split('\\');
+                        partes.pop();
+                        let pai = partes.join('\\');
+                        // Se sobrou só "C:", vira "C:\"
+                        if (pai.length === 2 && pai[1] === ':') pai += '\\';
+                        carregarItensLocais(pai);
+                    });
+                    container.appendChild(itemUp);
+                }
+
+                if (data.itens.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'empty-state';
+                    empty.innerHTML = '<p class="text-muted">Pasta vazia</p>';
+                    container.appendChild(empty);
+                }
+
+                data.itens.forEach(item => {
+                    const el = document.createElement('div');
+                    el.className = 'tree-item';
+                    
+                    const icon = document.createElement('i');
+                    icon.className = item.tipo === 'dir' ? 'fas fa-folder tree-folder-icon' : 'fas fa-file text-muted';
+                    icon.style.marginLeft = "8px";
+                    
+                    const name = document.createElement('span');
+                    name.className = 'tree-name';
+                    name.textContent = item.nome;
+                    name.style.marginLeft = "6px";
+                    
+                    el.appendChild(icon);
+                    el.appendChild(name);
+                    
+                    // Se for Modo de Origem (Múltiplo)
+                    if (localSelectionMode === 'origin') {
+                        const btnAdd = document.createElement('button');
+                        btnAdd.className = 'btn btn-sm btn-ghost';
+                        btnAdd.innerHTML = '<i class="fas fa-plus"></i>';
+                        btnAdd.style.padding = '2px 6px';
+                        btnAdd.onclick = function(ev) {
+                            ev.stopPropagation();
+                            if (!localSelectedItems.includes(item.caminho)) {
+                                localSelectedItems.push(item.caminho);
+                                atualizarListaLocalUI();
+                            }
+                        };
+                        el.appendChild(btnAdd);
+                    }
+
+                    el.addEventListener('click', function() {
+                        if (item.tipo === 'dir') {
+                            carregarItensLocais(item.caminho);
+                        } else if (localSelectionMode === 'origin') {
+                            // Se clicou num arquivo no modo origem, adiciona à lista
+                            if (!localSelectedItems.includes(item.caminho)) {
+                                localSelectedItems.push(item.caminho);
+                                atualizarListaLocalUI();
+                            }
+                        }
+                    });
+
+                    container.appendChild(el);
+                });
+                
+                atualizarBotoesLocal();
+            })
+            .catch(err => {
+                container.innerHTML = '<div class="empty-state"><p>Erro ao carregar: ' + err + '</p></div>';
+            });
+    }
+    
+    function atualizarListaLocalUI() {
+        const ul = document.getElementById('local-selected-ul');
+        ul.innerHTML = '';
+        
+        localSelectedItems.forEach((caminho, index) => {
+            const li = document.createElement('div');
+            li.style.display = 'flex';
+            li.style.justifyContent = 'space-between';
+            li.style.alignItems = 'center';
+            li.style.padding = '4px 8px';
+            li.style.background = 'var(--bg-input)';
+            li.style.borderRadius = 'var(--radius-sm)';
+            li.style.marginBottom = '4px';
+            li.style.fontSize = '0.85rem';
+            
+            const txt = document.createElement('span');
+            txt.textContent = caminho;
+            txt.style.overflow = 'hidden';
+            txt.style.textOverflow = 'ellipsis';
+            txt.style.whiteSpace = 'nowrap';
+            
+            const btn = document.createElement('button');
+            btn.innerHTML = '<i class="fas fa-times"></i>';
+            btn.className = 'btn btn-ghost';
+            btn.style.color = '#ef4444';
+            btn.style.padding = '2px 6px';
+            btn.onclick = function() {
+                localSelectedItems.splice(index, 1);
+                atualizarListaLocalUI();
+            };
+            
+            li.appendChild(txt);
+            li.appendChild(btn);
+            ul.appendChild(li);
+        });
+        
+        atualizarBotoesLocal();
+    }
+    
+    function atualizarBotoesLocal() {
+        const btnConf = document.getElementById('btn-selecionar-local');
+        if (localSelectionMode === 'origin') {
+            btnConf.disabled = localSelectedItems.length === 0;
+        } else {
+            // Em modo destino, só pode confirmar se tiver caminho
+            btnConf.disabled = !localCurrentPath;
+        }
+    }
+    
+    function adicionarPastaAtualAsOrigens() {
+        if (localCurrentPath && !localSelectedItems.includes(localCurrentPath)) {
+            localSelectedItems.push(localCurrentPath);
+            atualizarListaLocalUI();
+        }
+    }
+
+    function confirmarSelecaoLocal() {
+        if (localSelectionMode === 'origin') {
+            const finalStr = localSelectedItems.join('|');
+            document.getElementById('pasta_origem').value = finalStr;
+        } else {
+            document.getElementById('destino_local').value = localCurrentPath;
+        }
+        fecharModalLocal();
+    }
+</script>
+{% endblock %}

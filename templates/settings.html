@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}Configurações - DriveBackup{% endblock %}
+{% block page_title %}Configurações{% endblock %}
+
+{% block content %}
+<form method="POST">
+    <!-- Google Drive -->
+    <div class="card">
+        <div class="card-header">
+            <h2><i class="fab fa-google-drive"></i> Google Drive</h2>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label for="google_json_path"><i class="fas fa-key"></i> Caminho do Arquivo JSON de Credenciais</label>
+                <input type="password" id="google_json_path" name="google_json_path" class="form-control"
+                       placeholder="Ex: C:\credentials\service-account.json"
+                       value="{{ config.get('google_json_path', '') }}">
+                <small class="form-hint">Arquivo JSON da Conta de Serviço do Google Cloud Console</small>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="testarDrive()">
+                <i class="fas fa-plug"></i> Testar Conexão
+            </button>
+            <span id="drive-test-result" class="test-result"></span>
+        </div>
+    </div>
+
+    <!-- WhatsApp / Evolution API -->
+    <div class="card">
+        <div class="card-header">
+            <h2><i class="fab fa-whatsapp"></i> WhatsApp (Evolution API)</h2>
+        </div>
+        <div class="card-body">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="evolution_url"><i class="fas fa-link"></i> URL da Evolution API</label>
+                    <input type="text" id="evolution_url" name="evolution_url" class="form-control"
+                           placeholder="https://chatapi.exemplo.com/"
+                           value="{{ config.get('evolution_url', '') }}">
+                </div>
+                <div class="form-group">
+                    <label for="evolution_instance"><i class="fas fa-server"></i> Instância</label>
+                    <input type="text" id="evolution_instance" name="evolution_instance" class="form-control"
+                           placeholder="Nome da instância"
+                           value="{{ config.get('evolution_instance', '') }}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="evolution_apikey"><i class="fas fa-lock"></i> API Key</label>
+                    <input type="password" id="evolution_apikey" name="evolution_apikey" class="form-control"
+                           placeholder="Chave de API"
+                           value="{{ config.get('evolution_apikey', '') }}">
+                </div>
+                <div class="form-group">
+                    <label for="whatsapp_destino"><i class="fas fa-phone"></i> Número de Destino</label>
+                    <input type="text" id="whatsapp_destino" name="whatsapp_destino" class="form-control"
+                           placeholder="5565999999999"
+                           value="{{ config.get('whatsapp_destino', '') }}">
+                    <small class="form-hint">Número com código do país (ex: 5565...)</small>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-success" onclick="testarWhatsApp()">
+                <i class="fab fa-whatsapp"></i> Testar WhatsApp
+            </button>
+            <span id="whatsapp-test-result" class="test-result"></span>
+        </div>
+    </div>
+
+    <!-- Gestão do Sistema -->
+    <div class="card">
+        <div class="card-header">
+            <h2><i class="fas fa-tools"></i> Gestão do Sistema</h2>
+        </div>
+        <div class="card-body">
+            <div class="maintenance-actions">
+                <div class="action-item">
+                    <p><strong>Sincronização:</strong> Puxar a versão mais recente do código e executáveis diretamente do repositório.</p>
+                    <button type="button" class="btn btn-primary" onclick="atualizarSistema()">
+                        <i class="fas fa-cloud-download-alt"></i> Puxar Atualizações (Git)
+                    </button>
+                    <span id="update-result" class="test-result"></span>
+                </div>
+                <hr style="margin: 20px 0;">
+                <div class="action-item">
+                    <p><strong>Ações de Serviço:</strong> Reiniciar o serviço do Windows para aplicar novas atualizações ou resolver problemas.</p>
+                    <button type="button" class="btn btn-warning" onclick="reiniciarSistema()">
+                        <i class="fas fa-sync"></i> Reiniciar Serviço
+                    </button>
+                    <span id="restart-result" class="test-result"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Salvar -->
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary btn-lg">
+            <i class="fas fa-save"></i> Salvar Configurações
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function testarDrive() {
+        const el = document.getElementById('drive-test-result');
+        el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testando...';
+        el.className = 'test-result';
+
+        fetch('/settings/testar-drive', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    el.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-success';
+                } else {
+                    el.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-error';
+                }
+            })
+            .catch(err => {
+                el.innerHTML = '<i class="fas fa-bug"></i> Erro: ' + err;
+                el.className = 'test-result test-error';
+            });
+    }
+
+    function testarWhatsApp() {
+        const el = document.getElementById('whatsapp-test-result');
+        el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+        el.className = 'test-result';
+
+        fetch('/settings/testar-whatsapp', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    el.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-success';
+                } else {
+                    el.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-error';
+                }
+            })
+            .catch(err => {
+                el.innerHTML = '<i class="fas fa-bug"></i> Erro: ' + err;
+                el.className = 'test-result test-error';
+            });
+    }
+
+    function atualizarSistema() {
+        if(!confirm("Deseja realmente buscar atualizações no Git? Isso pode sobrescrever arquivos locais.")) return;
+        
+        const el = document.getElementById('update-result');
+        el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sincronizando...';
+        el.className = 'test-result';
+
+        fetch('/api/sistema/atualizar', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    el.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-success';
+                } else {
+                    el.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-error';
+                }
+            })
+            .catch(err => {
+                el.innerHTML = '<i class="fas fa-bug"></i> Erro: ' + err;
+                el.className = 'test-result test-error';
+            });
+    }
+
+    function reiniciarSistema() {
+        if(!confirm("O painel ficará offline por alguns segundos. Deseja reiniciar o serviço agora?")) return;
+
+        const el = document.getElementById('restart-result');
+        el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando comando...';
+        el.className = 'test-result';
+
+        fetch('/api/sistema/reiniciar', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    el.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-success';
+                    alert("Aguarde alguns segundos e atualize a página.");
+                } else {
+                    el.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.mensagem;
+                    el.className = 'test-result test-error';
+                }
+            })
+            .catch(err => {
+                el.innerHTML = '<i class="fas fa-bug"></i> Erro: ' + err;
+                el.className = 'test-result test-error';
+            });
+    }
+</script>
+{% endblock %}

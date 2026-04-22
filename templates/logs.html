@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Histórico - DriveBackup{% endblock %}
+{% block page_title %}Histórico de Execuções{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2><i class="fas fa-clock-rotate-left"></i> Todas as Execuções</h2>
+    </div>
+    <div class="card-body">
+        {% if execucoes %}
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Job</th>
+                        <th>Início</th>
+                        <th>Fim</th>
+                        <th>Tamanho</th>
+                        <th>Arquivos</th>
+                        <th>Destino</th>
+                        <th>Mensagem</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for exec in execucoes %}
+                    <tr class="{% if exec.status == 'erro' %}row-error{% elif exec.status == 'em_andamento' %}row-progress{% endif %}">
+                        <td>
+                            {% if exec.status == 'sucesso' %}
+                                <span class="badge badge-green"><i class="fas fa-check"></i> Sucesso</span>
+                            {% elif exec.status == 'erro' %}
+                                <span class="badge badge-red"><i class="fas fa-times"></i> Erro</span>
+                            {% else %}
+                                <span class="badge badge-blue"><i class="fas fa-spinner fa-spin"></i> Executando</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ exec.job_nome }}</strong></td>
+                        <td>{{ exec.inicio[:16].replace('T', ' ') if exec.inicio else '-' }}</td>
+                        <td>{{ exec.fim[:16].replace('T', ' ') if exec.fim else '-' }}</td>
+                        <td>
+                            {% if exec.tamanho_zip %}
+                                {% if exec.tamanho_zip > 1073741824 %}
+                                    {{ "%.2f"|format(exec.tamanho_zip / 1073741824) }} GB
+                                {% elif exec.tamanho_zip > 1048576 %}
+                                    {{ "%.1f"|format(exec.tamanho_zip / 1048576) }} MB
+                                {% else %}
+                                    {{ "%.1f"|format(exec.tamanho_zip / 1024) }} KB
+                                {% endif %}
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>{{ exec.arquivos_total if exec.arquivos_total else '-' }}</td>
+                        <td>
+                            {% if exec.destino_usado == 'drive' %}
+                                <i class="fas fa-cloud"></i> Drive
+                            {% elif exec.destino_usado == 'local' %}
+                                <i class="fas fa-hdd"></i> Local
+                            {% elif exec.destino_usado == 'ambos' %}
+                                <i class="fas fa-arrows-alt"></i> Ambos
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>
+                            <span class="msg-truncate" title="{{ exec.mensagem }}">
+                                {{ exec.mensagem[:80] if exec.mensagem else '-' }}{% if exec.mensagem and exec.mensagem|length > 80 %}...{% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="fas fa-clock"></i>
+            <h3>Sem Histórico</h3>
+            <p>Nenhum backup foi executado ainda.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

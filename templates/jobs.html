@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Jobs - DriveBackup{% endblock %}
+{% block page_title %}Jobs de Backup{% endblock %}
+
+{% block content %}
+<div class="page-actions">
+    <a href="{{ url_for('novo_job') }}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Novo Job
+    </a>
+</div>
+
+{% if jobs %}
+<div class="jobs-grid">
+    {% for job in jobs %}
+    <div class="job-card {% if not job.ativo %}job-inactive{% endif %}">
+        <div class="job-card-header">
+            <div class="job-title">
+                <h3>{{ job.nome }}</h3>
+                {% if job.ativo %}
+                    <span class="badge badge-green">Ativo</span>
+                {% else %}
+                    <span class="badge badge-red">Inativo</span>
+                {% endif %}
+            </div>
+            <div class="job-type">
+                {% if job.destino_tipo == 'drive' %}
+                    <span class="badge badge-blue"><i class="fas fa-cloud"></i> Google Drive</span>
+                {% elif job.destino_tipo == 'local' %}
+                    <span class="badge badge-gray"><i class="fas fa-hdd"></i> Local</span>
+                {% else %}
+                    <span class="badge badge-purple"><i class="fas fa-arrows-alt"></i> Drive + Local</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="job-card-body">
+            <div class="job-detail">
+                <i class="fas fa-folder-open"></i>
+                <div>
+                    <small>Origem</small>
+                    <span>{{ job.pasta_origem }}</span>
+                </div>
+            </div>
+
+            {% if job.destino_tipo in ['drive', 'ambos'] and job.destino_drive_nome %}
+            <div class="job-detail">
+                <i class="fas fa-cloud"></i>
+                <div>
+                    <small>Drive</small>
+                    <span>{{ job.destino_drive_nome }}</span>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if job.destino_tipo in ['local', 'ambos'] and job.destino_local %}
+            <div class="job-detail">
+                <i class="fas fa-hdd"></i>
+                <div>
+                    <small>Local</small>
+                    <span>{{ job.destino_local }}</span>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="job-detail">
+                <i class="fas fa-calendar-days"></i>
+                <div>
+                    <small>Agendamento</small>
+                    <span>
+                        {% set dias_map = {'seg':'Seg','ter':'Ter','qua':'Qua','qui':'Qui','sex':'Sex','sab':'Sáb','dom':'Dom'} %}
+                        {% for d in job.dias_semana_list %}{{ dias_map.get(d, d) }}{% if not loop.last %}, {% endif %}{% endfor %}
+                        às {{ job.horario }}
+                    </span>
+                </div>
+            </div>
+
+            {% if proximas.get(job.id|string) %}
+            <div class="job-detail">
+                <i class="fas fa-clock"></i>
+                <div>
+                    <small>Próximo Backup</small>
+                    <span class="text-accent">{{ proximas[job.id|string] }}</span>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if job.ultima %}
+            <div class="job-detail">
+                <i class="fas fa-history"></i>
+                <div>
+                    <small>Último Backup</small>
+                    <span>
+                        {% if job.ultima.status == 'sucesso' %}
+                            <span class="text-success">✅ {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
+                        {% elif job.ultima.status == 'erro' %}
+                            <span class="text-danger">❌ {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
+                        {% else %}
+                            <span class="text-info">⏳ Em andamento</span>
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="job-card-footer">
+            <form method="POST" action="{{ url_for('executar_job', job_id=job.id) }}" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-success" title="Executar agora">
+                    <i class="fas fa-play"></i> Executar
+                </button>
+            </form>
+            <form method="POST" action="{{ url_for('toggle_job', job_id=job.id) }}" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-ghost" title="{% if job.ativo %}Pausar{% else %}Ativar{% endif %}">
+                    <i class="fas {% if job.ativo %}fa-pause{% else %}fa-play{% endif %}"></i>
+                </button>
+            </form>
+            <a href="{{ url_for('editar_job', job_id=job.id) }}" class="btn btn-sm btn-ghost" title="Editar">
+                <i class="fas fa-pen"></i>
+            </a>
+            <form method="POST" action="{{ url_for('excluir_job', job_id=job.id) }}" style="display:inline;"
+                  onsubmit="return confirm('Excluir o job \'{{ job.nome }}\'?')">
+                <button type="submit" class="btn btn-sm btn-danger" title="Excluir">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body">
+        <div class="empty-state">
+            <i class="fas fa-briefcase"></i>
+            <h3>Nenhum Job de Backup</h3>
+            <p>Crie seu primeiro job para iniciar os backups automáticos.</p>
+            <a href="{{ url_for('novo_job') }}" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Criar Primeiro Job
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

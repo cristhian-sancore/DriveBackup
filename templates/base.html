@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DriveBackup{% endblock %}</title>
+    <meta name="description" content="Sistema de Backup automatizado para Google Drive e Local">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">
+                    <i class="fas fa-cloud-arrow-up"></i>
+                </div>
+                <div class="brand-text">
+                    <span class="brand-name">DriveBackup</span>
+                    <span class="brand-version">v1.0</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                    <i class="fas fa-chart-pie"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="{{ url_for('listar_jobs_view') }}" class="nav-item {% if request.endpoint in ['listar_jobs_view','novo_job','editar_job'] %}active{% endif %}">
+                    <i class="fas fa-briefcase"></i>
+                    <span>Jobs de Backup</span>
+                </a>
+                <a href="{{ url_for('logs_view') }}" class="nav-item {% if request.endpoint == 'logs_view' %}active{% endif %}">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    <span>Histórico</span>
+                </a>
+                <a href="{{ url_for('settings_view') }}" class="nav-item {% if request.endpoint == 'settings_view' %}active{% endif %}">
+                    <i class="fas fa-gear"></i>
+                    <span>Configurações</span>
+                </a>
+                
+                {% if session.get('logged_in') %}
+                <a href="{{ url_for('logout') }}" class="nav-item" style="margin-top: 20px; color: #ef4444;">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span>Sair (Bloquear)</span>
+                </a>
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot online"></span>
+                    <span>Sistema Ativo</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+                </div>
+                <div class="topbar-right">
+                    <span class="topbar-time" id="current-time"></span>
+                </div>
+            </header>
+
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-container">
+                        {% for category, message in messages %}
+                            <div class="flash-message flash-{{ category }}">
+                                <i class="fas {% if category == 'success' %}fa-check-circle{% elif category == 'error' %}fa-exclamation-circle{% elif category == 'info' %}fa-info-circle{% else %}fa-bell{% endif %}"></i>
+                                <span>{{ message }}</span>
+                                <button class="flash-close" onclick="this.parentElement.remove()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <!-- Page Content -->
+            <div class="page-content">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
