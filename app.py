@@ -249,19 +249,42 @@ def testar_whatsapp():
 @app.route("/api/sistema/atualizar", methods=["POST"])
 @login_required
 def api_sistema_atualizar():
-    """Executa o git pull para atualizar o código/binário."""
+    """Executa o git pull para atualizar o código/binário. Auto-inicializa se necessário."""
     try:
         import subprocess
+        config = models.obter_config()
+        repo_url = config.get("git_repo_url")
+        
+        if not repo_url:
+            return jsonify({"ok": False, "mensagem": "URL do repositório Git não configurada."})
+
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        # Tenta rodar o git pull
+        git_dir = os.path.join(base_dir, ".git")
+        
+        # Se não for um repositório git, inicializa
+        if not os.path.exists(git_dir):
+            subprocess.run(["git", "init"], cwd=base_dir, capture_output=True, check=True)
+            # Remove remote antigo se existir por algum motivo e adiciona o novo
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=base_dir, capture_output=True)
+            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=base_dir, capture_output=True, check=True)
+            subprocess.run(["git", "fetch", "origin"], cwd=base_dir, capture_output=True, check=True)
+            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=base_dir, capture_output=True, check=True)
+            return jsonify({"ok": True, "atualizado": True, "mensagem": "Sistema inicializado com Git e atualizado! Reinicie para aplicar."})
+
+        # Se já existir, apenas puxa
         process = subprocess.run(["git", "pull", "origin", "main"], 
                                 cwd=base_dir, capture_output=True, text=True)
         
         if process.returncode != 0:
+            # Tenta um reset hard se o pull falhar (comum se houver arquivos alterados localmente)
+            subprocess.run(["git", "fetch", "origin"], cwd=base_dir, capture_output=True)
+            process_reset = subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=base_dir, capture_output=True, text=True)
+            if process_reset.returncode == 0:
+                 return jsonify({"ok": True, "atualizado": True, "mensagem": "Sistema resetado para a versão do servidor com sucesso! Reinicie para aplicar."})
             return jsonify({"ok": False, "mensagem": f"Erro Git: {process.stderr or process.stdout}"})
             
         stdout = process.stdout
@@ -287,10 +310,16 @@ def api_sistema_reiniciar():
         service_name = "BKP_FASPEL"
         
         content = f"""@echo off
-echo Reiniciando o servico...
-timeout /t 3 /nobreak > nul
+echo Parando o servico {service_name}...
 net stop {service_name}
 timeout /t 2 /nobreak > nul
+
+if exist "BKP_FASPEL_Setup.exe" (
+    echo Atualizando para a nova versao...
+    copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
+)
+
+echo Reiniciando o servico {service_name}...
 net start {service_name}
 exit
 """
