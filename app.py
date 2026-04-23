@@ -250,48 +250,101 @@ def testar_whatsapp():
 # ========================
 # API - Manutenção do Sistema
 # ========================
+# GESTÃO DO SISTEMA E ATUALIZAÇÃO
+# ========================
 
-@app.route("/api/sistema/atualizar", methods=["POST"])
+def obter_versao_local():
+    """Retorna o SHA do último commit baixado."""
+    version_file = os.path.join(BASE_DIR, "data", "version.json")
+    if os.path.exists(version_file):
+        try:
+            with open(version_file, 'r') as f:
+                return json.load(f).get("sha", "000000")
+        except: pass
+    return "unknown"
+
+@app.route("/api/sistema/status_atualizacao")
 @login_required
-def api_sistema_atualizar():
-    """Baixa a atualização do GitHub usando requests."""
+def api_sistema_status_atualizacao():
+    """Verifica se existe um commit mais recente no GitHub."""
     try:
         import requests
         config = models.obter_config()
         token = config.get("git_token", "")
         repo_url = config.get("git_repo_url", "https://github.com/cristhian-sancore/DriveBackup")
         
-        # Extrai owner e repo da URL
         try:
             parts = repo_url.rstrip("/").split("/")
-            owner = parts[-2]
-            repo = parts[-1]
+            owner, repo = parts[-2], parts[-1]
         except:
-            owner = "cristhian-sancore"
-            repo = "DriveBackup"
+            owner, repo = "cristhian-sancore", "DriveBackup"
+
+        headers = {"Authorization": f"token {token}"} if token else {}
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/main"
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            latest_sha = response.json().get("sha")
+            local_sha = obter_versao_local()
+            return jsonify({
+                "ok": True,
+                "local_sha": local_sha[:7],
+                "latest_sha": latest_sha[:7],
+                "tem_atualizacao": latest_sha != local_sha
+            })
+    except Exception as e:
+        return jsonify({"ok": False, "mensagem": str(e)})
+    return jsonify({"ok": False, "mensagem": "Falha ao verificar versao"})
+
+@app.route("/api/sistema/atualizar", methods=["POST"])
+@login_required
+def api_sistema_atualizar():
+    """Baixa o novo BKP_FASPEL_Setup.exe diretamente do GitHub."""
+    try:
+        import requests
+        config = models.obter_config()
+        token = config.get("git_token", "")
+        repo_url = config.get("git_repo_url", "https://github.com/cristhian-sancore/DriveBackup")
+        
+        try:
+            parts = repo_url.rstrip("/").split("/")
+            owner, repo = parts[-2], parts[-1]
+        except:
+            owner, repo = "cristhian-sancore", "DriveBackup"
+        
+        # 1. Busca o SHA mais recente primeiro
+        headers = {"Authorization": f"token {token}"} if token else {}
+        sha_url = f"https://api.github.com/repos/{owner}/{repo}/commits/main"
+        sha_res = requests.get(sha_url, headers=headers, timeout=10)
+        latest_sha = sha_res.json().get("sha") if sha_res.status_code == 200 else None
+
+        # 2. Baixa o EXE diretamente
+        # Se o repo for privado, precisamos usar a API de 'contents' com header de aceitação raw
+        exe_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL_Setup.exe?ref=main"
+        headers["Accept"] = "application/vnd.github.v3.raw"
         
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        zip_path = os.path.join(base_dir, "update.zip")
+        exe_path = os.path.join(base_dir, "BKP_FASPEL_Setup.exe")
         
-        headers = {}
-        if token:
-            headers["Authorization"] = f"token {token}"
-        
-        url = f"https://api.github.com/repos/{owner}/{repo}/zipball/main"
-        
-        response = requests.get(url, headers=headers, stream=True)
+        response = requests.get(exe_url, headers=headers, stream=True, timeout=30)
         if response.status_code != 200:
-            return jsonify({"ok": False, "mensagem": f"Erro no GitHub ({response.status_code}): {response.text}"})
+            return jsonify({"ok": False, "mensagem": f"Erro ao baixar EXE ({response.status_code}): {response.text}"})
             
-        with open(zip_path, 'wb') as f:
+        with open(exe_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+        
+        # 3. Salva o novo SHA localmente
+        if latest_sha:
+            version_file = os.path.join(base_dir, "data", "version.json")
+            with open(version_file, 'w') as f:
+                json.dump({"sha": latest_sha, "date": datetime.now().isoformat()}, f)
             
-        return jsonify({"ok": True, "atualizado": True, "mensagem": "Atualização baixada com sucesso! Clique em 'Reiniciar' para aplicar."})
+        return jsonify({"ok": True, "atualizado": True, "mensagem": "Novo executável baixado! Clique em 'Reiniciar' para aplicar."})
     except Exception as e:
         return jsonify({"ok": False, "mensagem": f"Erro interno: {str(e)}"})
 

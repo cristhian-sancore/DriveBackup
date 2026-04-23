@@ -99,9 +99,12 @@
                     <small class="form-hint">Necessário para baixar atualizações de repositórios privados.</small>
                 </div>
                 <div class="action-item">
-                    <p><strong>Sincronização:</strong> Puxar a versão mais recente do código e executáveis diretamente do repositório.</p>
-                    <button type="button" class="btn btn-primary" onclick="atualizarSistema()">
-                        <i class="fas fa-cloud-download-alt"></i> Puxar Atualizações (Git)
+                    <p><strong>Sincronização:</strong> Puxar o executável mais recente diretamente do repositório.</p>
+                    <div id="update-status" style="margin-bottom: 10px;">
+                        <span class="badge badge-info"><i class="fas fa-search"></i> Verificando versão...</span>
+                    </div>
+                    <button type="button" id="btn-atualizar" class="btn btn-primary" onclick="atualizarSistema()" disabled>
+                        <i class="fas fa-cloud-download-alt"></i> Puxar Atualizações
                     </button>
                     <span id="update-result" class="test-result"></span>
                 </div>
@@ -221,8 +224,30 @@
             });
     }
 
-    // Inicialização: Verifica status do Drive ao carregar
+    function verificarAtualizacao() {
+        const el = document.getElementById('update-status');
+        const btn = document.getElementById('btn-atualizar');
+        
+        fetch('/api/sistema/status_atualizacao')
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    if (data.tem_atualizacao) {
+                        el.innerHTML = `<span class="badge badge-warning"><i class="fas fa-arrow-up"></i> Nova versão disponível: ${data.latest_sha} (Local: ${data.local_sha})</span>`;
+                        btn.disabled = false;
+                    } else {
+                        el.innerHTML = `<span class="badge badge-success"><i class="fas fa-check-double"></i> Você está na versão mais recente: ${data.local_sha}</span>`;
+                        btn.disabled = true;
+                    }
+                } else {
+                    el.innerHTML = `<span class="badge badge-danger"><i class="fas fa-times"></i> Erro ao verificar: ${data.mensagem}</span>`;
+                }
+            });
+    }
+
+    // Inicialização: Verifica status do Drive e Atualização ao carregar
     document.addEventListener('DOMContentLoaded', function() {
+        // Drive
         const badge = document.getElementById('drive-status-badge');
         fetch('/settings/testar-drive', {method: 'POST'})
             .then(r => r.json())
@@ -233,6 +258,9 @@
                     badge.innerHTML = '<span class="badge badge-danger"><i class="fas fa-exclamation-triangle"></i> Desconectado</span>';
                 }
             });
+        
+        // Versão
+        verificarAtualizacao();
     });
 </script>
 {% endblock %}
