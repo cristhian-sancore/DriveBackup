@@ -381,15 +381,25 @@ echo Parando o servico {service_name}...
 net stop {service_name}
 timeout /t 2 /nobreak > nul
 
+set UPDATED=0
+
 if exist "BKP_FASPEL_Setup.exe" (
-    echo Atualizando para a nova versao...
+    echo Atualizando para a nova versao (Setup)...
     copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
     del "BKP_FASPEL_Setup.exe"
+    set UPDATED=1
+)
+
+if exist "BKP_FASPEL_NEW.exe" (
+    echo Atualizando para a nova versao (NEW)...
+    copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
+    del "BKP_FASPEL_NEW.exe"
+    set UPDATED=1
 )
 
 echo Reiniciando o servico {service_name}...
 net start {service_name}
-exit
+del "%~f0" & exit
 """
         with open(bat_path, "w") as f:
             f.write(content)
