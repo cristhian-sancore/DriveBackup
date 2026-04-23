@@ -382,36 +382,32 @@ def api_sistema_reiniciar():
         service_name = "BKP_FASPEL"
         
         content = f"""@echo off
+setlocal
+cd /d "%~dp0"
 echo Parando o servico {service_name}...
 net stop {service_name}
+taskkill /f /im BKP_FASPEL.exe > nul 2>&1
 timeout /t 5 /nobreak > nul
-
-set UPDATED=0
 
 if exist "BKP_FASPEL_Setup.exe" (
     echo Atualizando para a nova versao (Setup)...
     copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
-    del "BKP_FASPEL_Setup.exe"
-    set UPDATED=1
+    if %errorlevel% equ 0 (
+        del "BKP_FASPEL_Setup.exe"
+    )
 )
 
 if exist "BKP_FASPEL_NEW.exe" (
     echo Atualizando para a nova versao (NEW)...
     copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
-    del "BKP_FASPEL_NEW.exe"
-    set UPDATED=1
+    if %errorlevel% equ 0 (
+        del "BKP_FASPEL_NEW.exe"
+    )
 )
 
 timeout /t 2 /nobreak > nul
 echo Reiniciando o servico {service_name}...
 net start {service_name}
-
-if %errorlevel% neq 0 (
-    echo Tentando iniciar novamente...
-    net start {service_name}
-)
-
-echo Concluido!
 del "%~f0" & exit
 """
         with open(bat_path, "w") as f:
