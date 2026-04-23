@@ -14,14 +14,6 @@
             </div>
         </div>
         <div class="card-body">
-            <div class="form-group">
-                <label for="google_json_path"><i class="fas fa-key"></i> Caminho do Arquivo JSON de Credenciais</label>
-                <input type="password" id="google_json_path" name="google_json_path" class="form-control"
-                       placeholder="Ex: C:\credentials\service-account.json"
-                       value="{{ config.get('google_json_path', '') }}">
-                <small class="form-hint">Arquivo JSON da Conta de Serviço ou Client Secret (OAuth)</small>
-            </div>
-            
             <div class="d-flex align-items-center mb-3" style="gap: 10px;">
                 <button type="button" class="btn btn-primary" onclick="testarDrive()">
                     <i class="fas fa-plug"></i> Testar Conexão
