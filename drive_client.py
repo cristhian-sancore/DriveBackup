@@ -25,13 +25,26 @@ TOKEN_FILE = os.path.join(BASE_DIR, "data", "token.json")
 _service = None
 
 
-def autenticar(json_path):
+def autenticar(json_path, flow_web=False):
     """
     Autentica com o Google Drive.
     Detecta automaticamente se é OAuth2 (credentials.json) ou Service Account.
     """
     global _service
     if not json_path or not os.path.exists(json_path):
+        # Se não tem JSON, tenta carregar o token existente silenciosamente
+        if os.path.exists(TOKEN_FILE):
+            try:
+                creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                    with open(TOKEN_FILE, 'w') as token:
+                        token.write(creds.to_json())
+                _service = build('drive', 'v3', credentials=creds)
+                return _service
+            except Exception as e:
+                print(f"Erro ao carregar token existente: {e}")
+        
         raise FileNotFoundError(f"Arquivo de credenciais nao encontrado: {json_path}")
     
     # Lê o JSON para detectar o tipo
@@ -45,7 +58,6 @@ def autenticar(json_path):
         creds = service_account.Credentials.from_service_account_file(json_path, scopes=SCOPES)
     else:
         # ===== OAuth2 (Desktop App) =====
-        # Tenta carregar token salvo
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
         
         if os.path.exists(TOKEN_FILE):
@@ -56,15 +68,13 @@ def autenticar(json_path):
             if creds and creds.expired and creds.refresh_token:
                 # Renova o token automaticamente
                 creds.refresh(Request())
+            elif not flow_web:
+                # Primeira vez: abre o navegador local (apenas se não for via WEB)
+                flow = InstalledAppFlow.from_client_secrets_file(json_path, SCOPES)
+                creds = flow.run_local_server(port=0, prompt='consent', access_type='offline')
             else:
-                # Primeira vez: abre o navegador para autorizar
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    json_path, SCOPES)
-                creds = flow.run_local_server(
-                    port=0,
-                    prompt='consent',
-                    access_type='offline'
-                )
+                # Se for flow_web, não fazemos nada aqui, o app.py resolve
+                return None
             
             # Salva o token para não precisar autorizar novamente
             with open(TOKEN_FILE, 'w') as token:
@@ -77,8 +87,17 @@ def autenticar(json_path):
 def get_service(json_path=None):
     """Retorna o service do Drive, autenticando se necessário."""
     global _service
-    if _service is None and json_path:
+    if _service:
+        # Verifica se o serviço atual ainda é válido (token não expirou)
+        try:
+            if _service._http.credentials and _service._http.credentials.expired:
+                 _service = None # Força re-autenticação
+        except:
+            pass
+
+    if _service is None:
         autenticar(json_path)
+        
     if _service is None:
         raise Exception("Google Drive nao autenticado. Configure as credenciais.")
     return _service

@@ -7,8 +7,11 @@
 <form method="POST">
     <!-- Google Drive -->
     <div class="card">
-        <div class="card-header">
+        <div class="card-header d-flex justify-content-between align-items-center">
             <h2><i class="fab fa-google-drive"></i> Google Drive</h2>
+            <div id="drive-status-badge">
+                <span class="badge badge-secondary"><i class="fas fa-sync fa-spin"></i> Verificando...</span>
+            </div>
         </div>
         <div class="card-body">
             <div class="form-group">
@@ -16,11 +19,18 @@
                 <input type="password" id="google_json_path" name="google_json_path" class="form-control"
                        placeholder="Ex: C:\credentials\service-account.json"
                        value="{{ config.get('google_json_path', '') }}">
-                <small class="form-hint">Arquivo JSON da Conta de Serviço do Google Cloud Console</small>
+                <small class="form-hint">Arquivo JSON da Conta de Serviço ou Client Secret (OAuth)</small>
             </div>
-            <button type="button" class="btn btn-sm btn-primary" onclick="testarDrive()">
-                <i class="fas fa-plug"></i> Testar Conexão
-            </button>
+            
+            <div class="d-flex align-items-center mb-3" style="gap: 10px;">
+                <button type="button" class="btn btn-primary" onclick="testarDrive()">
+                    <i class="fas fa-plug"></i> Testar Conexão
+                </button>
+                
+                <a href="{{ url_for('auth_google') }}" class="btn btn-outline-danger">
+                    <i class="fab fa-google"></i> Conectar via Navegador (OAuth)
+                </a>
+            </div>
             <span id="drive-test-result" class="test-result"></span>
         </div>
     </div>
@@ -74,6 +84,13 @@
         </div>
         <div class="card-body">
             <div class="maintenance-actions">
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="git_repo_url"><i class="fas fa-link"></i> URL do Repositório Git</label>
+                    <input type="text" id="git_repo_url" name="git_repo_url" class="form-control"
+                           placeholder="https://github.com/usuario/repositorio"
+                           value="{{ config.get('git_repo_url', '') }}">
+                    <small class="form-hint">URL usada para puxar atualizações do sistema.</small>
+                </div>
                 <div class="action-item">
                     <p><strong>Sincronização:</strong> Puxar a versão mais recente do código e executáveis diretamente do repositório.</p>
                     <button type="button" class="btn btn-primary" onclick="atualizarSistema()">
@@ -196,5 +213,19 @@
                 el.className = 'test-result test-error';
             });
     }
+
+    // Inicialização: Verifica status do Drive ao carregar
+    document.addEventListener('DOMContentLoaded', function() {
+        const badge = document.getElementById('drive-status-badge');
+        fetch('/settings/testar-drive', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    badge.innerHTML = '<span class="badge badge-success"><i class="fas fa-check"></i> Conectado</span>';
+                } else {
+                    badge.innerHTML = '<span class="badge badge-danger"><i class="fas fa-exclamation-triangle"></i> Desconectado</span>';
+                }
+            });
+    });
 </script>
 {% endblock %}

@@ -74,7 +74,8 @@ def init_db():
         "evolution_instance": "SIA",
         "evolution_apikey": "C9C8966DDB42-4BA9-9428-372BE0AE3382",
         "whatsapp_destino": "5565996772226",
-        "porta_servidor": "5555"
+        "porta_servidor": "5555",
+        "git_repo_url": "https://github.com/cristhian-sancore/DriveBackup"
     }
     for chave, valor in defaults.items():
         cursor.execute(
@@ -268,3 +269,41 @@ def salvar_config(dados):
         )
     conn.commit()
     conn.close()
+
+
+def detectar_e_atualizar_google_json():
+    """
+    Varre a pasta data em busca de arquivos JSON de credenciais.
+    Prioriza Service Account para automação.
+    """
+    config = obter_config()
+    # Se já tem um caminho válido configurado, não faz nada
+    if config.get("google_json_path") and os.path.exists(config.get("google_json_path")):
+        return config.get("google_json_path")
+
+    # Lista arquivos JSON na pasta data
+    if not os.path.exists(DATA_DIR):
+        return None
+
+    arquivos = [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
+    
+    # Procura primeiro por Service Account
+    for arq in arquivos:
+        caminho = os.path.join(DATA_DIR, arq)
+        try:
+            with open(caminho, 'r', encoding='utf-8') as f:
+                dados = json.load(f)
+                if dados.get("type") == "service_account":
+                    salvar_config({"google_json_path": caminho})
+                    return caminho
+        except:
+            continue
+            
+    # Se não achou Service Account, pega o primeiro client_secret que achar
+    for arq in arquivos:
+        if arq.startswith("client_secret"):
+            caminho = os.path.join(DATA_DIR, arq)
+            salvar_config({"google_json_path": caminho})
+            return caminho
+            
+    return None

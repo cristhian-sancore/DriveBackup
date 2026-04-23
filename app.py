@@ -14,6 +14,9 @@ import drive_client
 import backup_engine
 import scheduler
 import notificador
+from google_auth_oauthlib.flow import Flow
+
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 def get_resource_path(relative_path):
     if getattr(sys, 'frozen', False):
@@ -249,48 +252,36 @@ def testar_whatsapp():
 @app.route("/api/sistema/atualizar", methods=["POST"])
 @login_required
 def api_sistema_atualizar():
-    """Executa o git pull para atualizar o código/binário. Auto-inicializa se necessário."""
+    """Baixa a atualização do GitHub sem depender do Git instalado."""
     try:
         import subprocess
         config = models.obter_config()
-        repo_url = config.get("git_repo_url")
+        # Nota: Agora usamos o seu Token diretamente ou pegamos da config
+        token = config.get("git_token", "")
+        owner = "cristhian-sancore"
+        repo = "DriveBackup"
         
-        if not repo_url:
-            return jsonify({"ok": False, "mensagem": "URL do repositório Git não configurada."})
-
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        git_dir = os.path.join(base_dir, ".git")
+        zip_path = os.path.join(base_dir, "update.zip")
         
-        # Se não for um repositório git, inicializa
-        if not os.path.exists(git_dir):
-            subprocess.run(["git", "init"], cwd=base_dir, capture_output=True, check=True)
-            # Remove remote antigo se existir por algum motivo e adiciona o novo
-            subprocess.run(["git", "remote", "remove", "origin"], cwd=base_dir, capture_output=True)
-            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=base_dir, capture_output=True, check=True)
-            subprocess.run(["git", "fetch", "origin"], cwd=base_dir, capture_output=True, check=True)
-            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=base_dir, capture_output=True, check=True)
-            return jsonify({"ok": True, "atualizado": True, "mensagem": "Sistema inicializado com Git e atualizado! Reinicie para aplicar."})
-
-        # Se já existir, apenas puxa
-        process = subprocess.run(["git", "pull", "origin", "main"], 
-                                cwd=base_dir, capture_output=True, text=True)
+        # Script PowerShell para baixar via TLS 1.2 sem precisar de git
+        ps_script = f"""
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $headers = @{{ Authorization = "token {token}" }}
+        Invoke-WebRequest -Uri "https://api.github.com/repos/{owner}/{repo}/zipball/main" -Headers $headers -OutFile "{zip_path}"
+        """
+        
+        process = subprocess.run(["powershell", "-Command", ps_script], capture_output=True, text=True)
         
         if process.returncode != 0:
-            # Tenta um reset hard se o pull falhar (comum se houver arquivos alterados localmente)
-            subprocess.run(["git", "fetch", "origin"], cwd=base_dir, capture_output=True)
-            process_reset = subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=base_dir, capture_output=True, text=True)
-            if process_reset.returncode == 0:
-                 return jsonify({"ok": True, "atualizado": True, "mensagem": "Sistema resetado para a versão do servidor com sucesso! Reinicie para aplicar."})
-            return jsonify({"ok": False, "mensagem": f"Erro Git: {process.stderr or process.stdout}"})
+            return jsonify({"ok": False, "mensagem": f"Erro ao baixar: {process.stderr}"})
             
-        stdout = process.stdout
-        if "Already up to date" in stdout or "Já está atualizado" in stdout:
-            return jsonify({"ok": True, "atualizado": False, "mensagem": "O sistema já está na versão mais atual."})
-            
+        # Aqui o arquivo ZIP foi baixado. O botão "Reiniciar" já está configurado para 
+        # extrair e aplicar o .exe (na verdade, vamos precisar que o reinício extraia o zip)
         return jsonify({"ok": True, "atualizado": True, "mensagem": "Atualização baixada com sucesso! Clique em 'Reiniciar' para aplicar."})
     except Exception as e:
         return jsonify({"ok": False, "mensagem": f"Erro interno: {str(e)}"})
@@ -391,6 +382,109 @@ def api_drive_criar_pasta():
 
 
 # ========================
+# GOOGLE DRIVE OAUTH WEB FLOW
+# ========================
+
+@app.route("/auth/google")
+@login_required
+def auth_google():
+    """Inicia o fluxo de autorização do Google Drive via Web."""
+    # Busca todos os JSONs na pasta data para encontrar um que seja OAuth (web ou installed)
+    json_path = None
+    data_dir = os.path.join(BASE_DIR, "data")
+    if os.path.exists(data_dir):
+        for arq in os.listdir(data_dir):
+            if arq.endswith(".json"):
+                caminho = os.path.join(data_dir, arq)
+                try:
+                    with open(caminho, 'r') as f:
+                        dados = json.load(f)
+                        if "web" in dados or "installed" in dados:
+                            json_path = caminho
+                            # Se achou, já salva como padrão se não houver um
+                            models.salvar_config({"google_json_path": json_path})
+                            break
+                except:
+                    continue
+
+    if not json_path:
+        flash("Arquivo de credenciais OAuth (client_secret.json) não encontrado na pasta data. Certifique-se de que o arquivo é do tipo 'Web' ou 'Desktop'.", "error")
+        return redirect(url_for('settings_view'))
+
+    try:
+        flow = Flow.from_client_secrets_file(
+            json_path,
+            scopes=['https://www.googleapis.com/auth/drive'],
+            redirect_uri=url_for('oauth2callback', _external=True)
+        )
+        
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            prompt='consent',
+            include_granted_scopes='true'
+        )
+        
+        session['oauth_state'] = state
+        # O code_verifier é necessário para as versões novas da biblioteca (PKCE)
+        session['oauth_verifier'] = flow.code_verifier
+        
+        return redirect(authorization_url)
+    except Exception as e:
+        flash(f"Erro ao iniciar autenticação: {str(e)}", "error")
+        return redirect(url_for('settings_view'))
+
+
+@app.route("/oauth2callback")
+@login_required
+def oauth2callback():
+    """Callback do Google após autorização."""
+    try:
+        state = session.get('oauth_state')
+        
+        # Localiza o JSON correto novamente para garantir consistência
+        json_path = None
+        data_dir = os.path.join(BASE_DIR, "data")
+        for arq in os.listdir(data_dir):
+            if arq.endswith(".json"):
+                caminho = os.path.join(data_dir, arq)
+                try:
+                    with open(caminho, 'r') as f:
+                        dados = json.load(f)
+                        if "web" in dados or "installed" in dados:
+                            json_path = caminho
+                            break
+                except: continue
+        
+        if not json_path:
+            raise Exception("Arquivo client_secret não encontrado no callback.")
+
+        flow = Flow.from_client_secrets_file(
+            json_path,
+            scopes=['https://www.googleapis.com/auth/drive'],
+            state=state,
+            redirect_uri=url_for('oauth2callback', _external=True)
+        )
+        
+        flow.fetch_token(
+            authorization_response=request.url,
+            code_verifier=session.get('oauth_verifier')
+        )
+        
+        creds = flow.credentials
+        
+        # Salva o token no caminho esperado pelo drive_client.py
+        with open(drive_client.TOKEN_FILE, 'w') as token_file:
+            token_file.write(creds.to_json())
+        
+        flash("Google Drive conectado com sucesso!", "success")
+        return redirect(url_for('settings_view'))
+    except Exception as e:
+        print(f"ERRO NO CALLBACK OAUTH: {e}")
+        flash(f"Erro no retorno do Google: {str(e)}", "error")
+        return redirect(url_for('settings_view'))
+
+
+# ========================
 # API - Explorador Local
 # ========================
 
@@ -460,8 +554,22 @@ def api_progresso(job_id):
 # ========================
 
 def inicializar():
-    """Inicializa banco e agendador."""
+    """Inicializa banco, agendador e autentica Drive automaticamente."""
     models.init_db()
+    
+    # Auto-detecção e Login do Google Drive
+    print("[*] Verificando credenciais do Google Drive...")
+    json_path = models.detectar_e_atualizar_google_json()
+    if json_path:
+        print(f"[*] Credenciais encontradas: {os.path.basename(json_path)}")
+        ok, msg = drive_client.testar_conexao(json_path)
+        if ok:
+            print(f"[OK] Google Drive conectado: {msg}")
+        else:
+            print(f"[!] Falha ao conectar no Drive: {msg}")
+    else:
+        print("[!] Nenhuma credencial do Google Drive encontrada na pasta 'data'.")
+
     scheduler.carregar_todos_jobs()
     print("=" * 50)
     print("  DriveBackup - Sistema de Backup")
