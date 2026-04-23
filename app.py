@@ -322,14 +322,14 @@ def api_sistema_atualizar():
 
         # 2. Baixa o EXE diretamente usando a URL RAW (mais robusta para arquivos grandes)
         # Funciona para público e privado (se o token for enviado no header)
-        exe_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/BKP_FASPEL.exe"
+        exe_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/BKP_FASPEL_Setup.exe"
         
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        exe_path = os.path.join(base_dir, "BKP_FASPEL_NEW.exe")
+        exe_path = os.path.join(base_dir, "BKP_FASPEL_Setup.exe")
         
         response = requests.get(exe_url, headers=headers, stream=True, timeout=30)
         if response.status_code != 200:
@@ -368,10 +368,10 @@ echo Parando o servico {service_name}...
 net stop {service_name}
 timeout /t 2 /nobreak > nul
 
-if exist "BKP_FASPEL_NEW.exe" (
+if exist "BKP_FASPEL_Setup.exe" (
     echo Atualizando para a nova versao...
-    copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
-    del "BKP_FASPEL_NEW.exe"
+    copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
+    del "BKP_FASPEL_Setup.exe"
 )
 
 echo Reiniciando o servico {service_name}...
