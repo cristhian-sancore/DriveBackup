@@ -429,8 +429,9 @@ del "%~f0" & exit
         with open(bat_path, "w") as f:
             f.write(content)
             
-        import subprocess
-        subprocess.Popen([bat_path], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        # Executa o BAT como Administrador (necessário para controlar serviços)
+        import ctypes
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", bat_path, "", base_dir, 1)
         
         return jsonify({"ok": True, "mensagem": "Comando de reinício enviado. O sistema ficará offline brevemente."})
     except Exception as e:
