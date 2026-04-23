@@ -91,6 +91,13 @@
                            value="{{ config.get('git_repo_url', '') }}">
                     <small class="form-hint">URL usada para puxar atualizações do sistema.</small>
                 </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="git_token"><i class="fas fa-lock"></i> Token de Acesso GitHub (Personal Access Token)</label>
+                    <input type="password" id="git_token" name="git_token" class="form-control"
+                           placeholder="ghp_xxxxxxxxxxxx"
+                           value="{{ config.get('git_token', '') }}">
+                    <small class="form-hint">Necessário para baixar atualizações de repositórios privados.</small>
+                </div>
                 <div class="action-item">
                     <p><strong>Sincronização:</strong> Puxar a versão mais recente do código e executáveis diretamente do repositório.</p>
                     <button type="button" class="btn btn-primary" onclick="atualizarSistema()">

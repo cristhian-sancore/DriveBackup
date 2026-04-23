@@ -219,6 +219,8 @@ def settings_view():
             "evolution_instance": request.form.get("evolution_instance", "").strip(),
             "evolution_apikey": request.form.get("evolution_apikey", "").strip(),
             "whatsapp_destino": request.form.get("whatsapp_destino", "").strip(),
+            "git_repo_url": request.form.get("git_repo_url", "").strip(),
+            "git_token": request.form.get("git_token", "").strip(),
         }
         models.salvar_config(dados)
         flash("Configurações salvas!", "success")
@@ -252,14 +254,21 @@ def testar_whatsapp():
 @app.route("/api/sistema/atualizar", methods=["POST"])
 @login_required
 def api_sistema_atualizar():
-    """Baixa a atualização do GitHub sem depender do Git instalado."""
+    """Baixa a atualização do GitHub usando requests."""
     try:
-        import subprocess
+        import requests
         config = models.obter_config()
-        # Nota: Agora usamos o seu Token diretamente ou pegamos da config
         token = config.get("git_token", "")
-        owner = "cristhian-sancore"
-        repo = "DriveBackup"
+        repo_url = config.get("git_repo_url", "https://github.com/cristhian-sancore/DriveBackup")
+        
+        # Extrai owner e repo da URL
+        try:
+            parts = repo_url.rstrip("/").split("/")
+            owner = parts[-2]
+            repo = parts[-1]
+        except:
+            owner = "cristhian-sancore"
+            repo = "DriveBackup"
         
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
@@ -268,20 +277,20 @@ def api_sistema_atualizar():
             
         zip_path = os.path.join(base_dir, "update.zip")
         
-        # Script PowerShell para baixar via TLS 1.2 sem precisar de git
-        ps_script = f"""
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $headers = @{{ Authorization = "token {token}" }}
-        Invoke-WebRequest -Uri "https://api.github.com/repos/{owner}/{repo}/zipball/main" -Headers $headers -OutFile "{zip_path}"
-        """
+        headers = {}
+        if token:
+            headers["Authorization"] = f"token {token}"
         
-        process = subprocess.run(["powershell", "-Command", ps_script], capture_output=True, text=True)
+        url = f"https://api.github.com/repos/{owner}/{repo}/zipball/main"
         
-        if process.returncode != 0:
-            return jsonify({"ok": False, "mensagem": f"Erro ao baixar: {process.stderr}"})
+        response = requests.get(url, headers=headers, stream=True)
+        if response.status_code != 200:
+            return jsonify({"ok": False, "mensagem": f"Erro no GitHub ({response.status_code}): {response.text}"})
             
-        # Aqui o arquivo ZIP foi baixado. O botão "Reiniciar" já está configurado para 
-        # extrair e aplicar o .exe (na verdade, vamos precisar que o reinício extraia o zip)
+        with open(zip_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+            
         return jsonify({"ok": True, "atualizado": True, "mensagem": "Atualização baixada com sucesso! Clique em 'Reiniciar' para aplicar."})
     except Exception as e:
         return jsonify({"ok": False, "mensagem": f"Erro interno: {str(e)}"})
