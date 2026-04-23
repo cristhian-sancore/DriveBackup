@@ -386,51 +386,44 @@ def api_sistema_reiniciar():
         bat_path = os.path.join(base_dir, "restart_app.bat")
         service_name = "BKP_FASPEL"
         
+        nssm_path = os.path.join(BASE_DIR, "nssm.exe")
+        
         content = f"""@echo off
 setlocal
-cd /d "%~dp0"
-echo Parando o servico {service_name}...
-net stop {service_name}
-timeout /t 3 /nobreak > nul
-taskkill /f /im BKP_FASPEL.exe > nul 2>&1
+cd /d "{BASE_DIR}"
+echo [%date% %time%] Iniciando processo de atualizacao... > update_log.txt
+echo Diretorio: %cd% >> update_log.txt
+
+timeout /t 2 /nobreak > nul
+
+echo [%date% %time%] Parando servico {service_name}... >> update_log.txt
+"{nssm_path}" stop {service_name} >> update_log.txt 2>&1
+taskkill /f /im BKP_FASPEL.exe /t >> update_log.txt 2>&1
+
 timeout /t 5 /nobreak > nul
 
 if exist "BKP_FASPEL_Setup.exe" (
-    echo Atualizando para a nova versao (Setup)...
-    timeout /t 1 /nobreak > nul
-    copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
+    echo [%date% %time%] Substituindo executavel... >> update_log.txt
+    copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe" >> update_log.txt 2>&1
     if %errorlevel% equ 0 (
-        echo Sucesso ao copiar Setup!
+        echo [%date% %time%] Sucesso na copia! >> update_log.txt
         del "BKP_FASPEL_Setup.exe"
+    ) else (
+        echo [%date% %time%] ERRO NA COPIA: %errorlevel% >> update_log.txt
     )
 )
 
 timeout /t 2 /nobreak > nul
 
-if exist "BKP_FASPEL_NEW.exe" (
-    echo Atualizando para a nova versao (NEW)...
-    timeout /t 1 /nobreak > nul
-    copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
-    if %errorlevel% equ 0 (
-        echo Sucesso ao copiar NEW!
-        del "BKP_FASPEL_NEW.exe"
-    )
-)
-
-timeout /t 3 /nobreak > nul
-echo Reiniciando o servico {service_name}...
-net start {service_name} > update_log.txt 2>&1
+echo [%date% %time%] Iniciando servico {service_name}... >> update_log.txt
+"{nssm_path}" start {service_name} >> update_log.txt 2>&1
 
 if %errorlevel% neq 0 (
-    echo [ERROR] net start falhou, tentando via NSSM...
-    nssm.exe start {service_name} >> update_log.txt 2>&1
+    echo [%date% %time%] Falha ao iniciar pelo NSSM, tentando net start... >> update_log.txt
+    net start {service_name} >> update_log.txt 2>&1
 )
 
-if %errorlevel% neq 0 (
-    echo [ERROR] Falha critica ao iniciar o servico.
-)
-
-timeout /t 2 /nobreak > nul
+echo [%date% %time%] Processo finalizado. >> update_log.txt
 del "%~f0" & exit
 """
         with open(bat_path, "w") as f:
