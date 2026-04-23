@@ -419,7 +419,17 @@ if exist "BKP_FASPEL_NEW.exe" (
 
 timeout /t 3 /nobreak > nul
 echo Reiniciando o servico {service_name}...
-net start {service_name}
+net start {service_name} > update_log.txt 2>&1
+
+if %errorlevel% neq 0 (
+    echo [ERROR] net start falhou, tentando via NSSM...
+    nssm.exe start {service_name} >> update_log.txt 2>&1
+)
+
+if %errorlevel% neq 0 (
+    echo [ERROR] Falha critica ao iniciar o servico.
+)
+
 timeout /t 2 /nobreak > nul
 del "%~f0" & exit
 """
