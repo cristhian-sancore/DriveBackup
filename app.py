@@ -320,10 +320,9 @@ def api_sistema_atualizar():
         sha_res = requests.get(sha_url, headers=headers, timeout=10)
         latest_sha = sha_res.json().get("sha") if sha_res.status_code == 200 else None
 
-        # 2. Baixa o EXE diretamente
-        # Se o repo for privado, precisamos usar a API de 'contents' com header de aceitação raw
-        exe_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL.exe?ref=main"
-        headers["Accept"] = "application/vnd.github.v3.raw"
+        # 2. Baixa o EXE diretamente usando a URL RAW (mais robusta para arquivos grandes)
+        # Funciona para público e privado (se o token for enviado no header)
+        exe_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/BKP_FASPEL.exe"
         
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
