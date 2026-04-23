@@ -254,6 +254,11 @@ def testar_whatsapp():
 # GESTÃO DO SISTEMA E ATUALIZAÇÃO
 # ========================
 
+@app.route("/api/sistema/ping")
+def api_sistema_ping():
+    """Endpoint simples para verificar se o sistema voltou."""
+    return jsonify({"ok": True})
+
 def obter_versao_local():
     """Retorna o SHA do último commit baixado."""
     version_file = os.path.join(BASE_DIR, "data", "version.json")
@@ -379,7 +384,7 @@ def api_sistema_reiniciar():
         content = f"""@echo off
 echo Parando o servico {service_name}...
 net stop {service_name}
-timeout /t 2 /nobreak > nul
+timeout /t 5 /nobreak > nul
 
 set UPDATED=0
 
@@ -397,8 +402,16 @@ if exist "BKP_FASPEL_NEW.exe" (
     set UPDATED=1
 )
 
+timeout /t 2 /nobreak > nul
 echo Reiniciando o servico {service_name}...
 net start {service_name}
+
+if %errorlevel% neq 0 (
+    echo Tentando iniciar novamente...
+    net start {service_name}
+)
+
+echo Concluido!
 del "%~f0" & exit
 """
         with open(bat_path, "w") as f:
