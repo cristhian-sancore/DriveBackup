@@ -317,3 +317,24 @@ def deletar_arquivo(json_path, file_id):
         return True
     except HttpError as e:
         raise Exception(f"Erro ao deletar: {e}")
+
+
+def listar_arquivos_pasta(json_path, folder_id):
+    """Lista todos os arquivos dentro de uma pasta do Drive."""
+    service = get_service(json_path)
+    try:
+        results = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            fields="files(id, name, createdTime, size)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=200
+        ).execute()
+        return results.get("files", [])
+    except HttpError as e:
+        raise Exception(f"Erro ao listar arquivos: {e}")
+
+
+def excluir_arquivo(json_path, file_id):
+    """Alias para deletar_arquivo (usado pela retenção)."""
+    return deletar_arquivo(json_path, file_id)

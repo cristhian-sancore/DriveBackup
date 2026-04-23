@@ -123,6 +123,15 @@
                        value="{{ job.horario if job else '22:00' }}">
             </div>
 
+            <!-- Retenção -->
+            <div class="form-group">
+                <label for="retencao"><i class="fas fa-trash-restore"></i> Política de Retenção</label>
+                <input type="number" id="retencao" name="retencao" class="form-control" min="0" max="365"
+                       placeholder="0 = Manter todos"
+                       value="{{ job.retencao if job and job.retencao else '0' }}">
+                <small class="form-hint">Quantos backups manter. Defina <strong>0</strong> para manter todos (sem limite). Ex: <strong>7</strong> = mantém apenas os últimos 7 backups.</small>
+            </div>
+
             <!-- Botões -->
             <div class="form-actions">
                 <a href="{{ url_for('listar_jobs_view') }}" class="btn btn-ghost">

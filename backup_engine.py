@@ -134,7 +134,80 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None):
                                           arcname)
 
     tamanho = os.path.getsize(caminho_zip)
+    
+    # Verificação de integridade do ZIP
+    log(f"[ZIP] Verificando integridade do arquivo...")
+    with zipfile.ZipFile(caminho_zip, 'r') as zf:
+        resultado = zf.testzip()
+        if resultado is not None:
+            raise ValueError(f"Arquivo ZIP corrompido! Primeiro arquivo com erro: {resultado}")
+    log(f"[ZIP] Integridade OK!")
+    
     return caminho_zip, total_arquivos, tamanho
+
+
+def verificar_espaco_disco(caminho, tamanho_necessario):
+    """Verifica se há espaço suficiente no disco para o backup."""
+    try:
+        total, usado, livre = shutil.disk_usage(os.path.splitdrive(caminho)[0] or caminho)
+        # Precisa de pelo menos 2x o tamanho estimado (margem de segurança)
+        if livre < tamanho_necessario * 2:
+            livre_mb = livre / (1024 * 1024)
+            necessario_mb = (tamanho_necessario * 2) / (1024 * 1024)
+            raise IOError(f"Espaco insuficiente no disco! Livre: {livre_mb:.0f}MB, Necessario: {necessario_mb:.0f}MB")
+        return True
+    except IOError:
+        raise
+    except Exception:
+        return True  # Se não conseguir verificar, continua
+
+
+def limpar_backups_antigos(job, config):
+    """Remove backups antigos conforme a política de retenção do job."""
+    retencao = job.get("retencao", 0)
+    if retencao <= 0:
+        return  # Sem limite = manter todos
+    
+    nome_safe = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in job['nome'])
+    
+    # Limpa backups locais
+    if job["destino_tipo"] in ("local", "ambos") and job.get("destino_local"):
+        pasta = job["destino_local"]
+        if os.path.exists(pasta):
+            arquivos = sorted(
+                [f for f in os.listdir(pasta) if f.startswith(nome_safe) and f.endswith('.zip')],
+                reverse=True  # Mais recente primeiro
+            )
+            excedentes = arquivos[retencao:]
+            for arq in excedentes:
+                try:
+                    os.remove(os.path.join(pasta, arq))
+                    log(f"[Retencao] Backup antigo removido: {arq}")
+                except Exception as e:
+                    log(f"[Retencao] Erro ao remover {arq}: {e}")
+    
+    # Limpa backups no Google Drive
+    if job["destino_tipo"] in ("drive", "ambos") and job.get("destino_drive_id"):
+        try:
+            json_path = config.get("google_json_path", "")
+            drive_id = job.get("destino_drive_id")
+            arquivos_drive = drive_client.listar_arquivos_pasta(json_path, drive_id)
+            
+            # Filtra apenas os ZIPs deste job
+            zips_job = sorted(
+                [f for f in arquivos_drive if f['name'].startswith(nome_safe) and f['name'].endswith('.zip')],
+                key=lambda x: x.get('createdTime', ''),
+                reverse=True
+            )
+            excedentes = zips_job[retencao:]
+            for arq in excedentes:
+                try:
+                    drive_client.excluir_arquivo(json_path, arq['id'])
+                    log(f"[Retencao] Backup antigo removido do Drive: {arq['name']}")
+                except Exception as e:
+                    log(f"[Retencao] Erro ao remover do Drive {arq['name']}: {e}")
+        except Exception as e:
+            log(f"[Retencao] Erro ao limpar Drive: {e}")
 
 
 def copiar_local(caminho_zip, pasta_destino):
@@ -173,6 +246,24 @@ def executar_backup(job_id):
         algum_existe = any(os.path.exists(c) for c in caminhos_origem)
         if not algum_existe:
             raise FileNotFoundError(f"Nenhuma das origens foi encontrada: {job['pasta_origem']}")
+        # Verifica espaço em disco antes de iniciar
+        _set_progresso(job_id, "verificando", 0, "Verificando espaco em disco...")
+        try:
+            # Estima tamanho baseado na origem
+            tamanho_estimado = 0
+            for c in caminhos_origem:
+                if os.path.isfile(c):
+                    tamanho_estimado += os.path.getsize(c)
+                elif os.path.isdir(c):
+                    for root, dirs, files in os.walk(c):
+                        for f in files:
+                            try:
+                                tamanho_estimado += os.path.getsize(os.path.join(root, f))
+                            except:
+                                pass
+            verificar_espaco_disco(tempfile.gettempdir(), tamanho_estimado)
+        except IOError as e:
+            raise Exception(str(e))
 
         # ===== ETAPA 1: Compactar =====
         _set_progresso(job_id, "compactando", 0, "Iniciando compressao...")
@@ -233,6 +324,13 @@ def executar_backup(job_id):
             log(f"[Backup] Erro ao notificar WhatsApp: {ne}")
 
         log(f"[Backup] SUCESSO - Job '{job['nome']}' concluido em {duracao:.1f}s")
+
+        # ===== ETAPA 5: Retenção =====
+        try:
+            _set_progresso(job_id, "limpando", 95, "Aplicando politica de retencao...")
+            limpar_backups_antigos(job, config)
+        except Exception as re:
+            log(f"[Backup] Erro na retencao: {re}")
 
     except Exception as e:
         duracao = time.time() - inicio

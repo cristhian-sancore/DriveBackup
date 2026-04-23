@@ -191,7 +191,8 @@ def _parse_job_form(form):
         "destino_drive_nome": form.get("destino_drive_nome", "").strip() or None,
         "destino_local": form.get("destino_local", "").strip() or None,
         "dias_semana": dias,
-        "horario": form.get("horario", "22:00").strip()
+        "horario": form.get("horario", "22:00").strip(),
+        "retencao": int(form.get("retencao", 0) or 0)
     }
 
 

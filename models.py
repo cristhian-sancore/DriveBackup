@@ -45,6 +45,7 @@ def init_db():
             dias_semana TEXT NOT NULL DEFAULT '[]',
             horario TEXT NOT NULL DEFAULT '22:00',
             ativo INTEGER NOT NULL DEFAULT 1,
+            retencao INTEGER NOT NULL DEFAULT 0,
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -84,6 +85,17 @@ def init_db():
         )
 
     conn.commit()
+    
+    # Migração: adiciona coluna retencao se não existir (para bancos antigos)
+    try:
+        cursor.execute("SELECT retencao FROM jobs LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE jobs ADD COLUMN retencao INTEGER NOT NULL DEFAULT 0")
+            conn.commit()
+        except:
+            pass
+    
     conn.close()
 
 
@@ -96,8 +108,8 @@ def criar_job(dados):
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO jobs (nome, pasta_origem, destino_tipo, destino_drive_id,
-                         destino_drive_nome, destino_local, dias_semana, horario, ativo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                         destino_drive_nome, destino_local, dias_semana, horario, ativo, retencao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     """, (
         dados["nome"],
         dados["pasta_origem"],
@@ -106,7 +118,8 @@ def criar_job(dados):
         dados.get("destino_drive_nome"),
         dados.get("destino_local"),
         json.dumps(dados.get("dias_semana", [])),
-        dados.get("horario", "22:00")
+        dados.get("horario", "22:00"),
+        dados.get("retencao", 0)
     ))
     conn.commit()
     job_id = cursor.lastrowid
@@ -118,7 +131,7 @@ def atualizar_job(job_id, dados):
     conn = get_db()
     conn.execute("""
         UPDATE jobs SET nome=?, pasta_origem=?, destino_tipo=?, destino_drive_id=?,
-                       destino_drive_nome=?, destino_local=?, dias_semana=?, horario=?
+                       destino_drive_nome=?, destino_local=?, dias_semana=?, horario=?, retencao=?
         WHERE id=?
     """, (
         dados["nome"],
@@ -129,6 +142,7 @@ def atualizar_job(job_id, dados):
         dados.get("destino_local"),
         json.dumps(dados.get("dias_semana", [])),
         dados.get("horario", "22:00"),
+        dados.get("retencao", 0),
         job_id
     ))
     conn.commit()
