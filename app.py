@@ -281,7 +281,8 @@ def api_sistema_status_atualizacao():
             owner, repo = "cristhian-sancore", "DriveBackup"
 
         headers = {"Authorization": f"token {token}"} if token else {}
-        url = f"https://api.github.com/repos/{owner}/{repo}/commits/main"
+        # Adiciona um timestamp para evitar cache da API do GitHub
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/main?t={int(time.time())}"
         
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
