@@ -208,6 +208,36 @@ def logs_view():
 
 
 # ========================
+# API - CONTROLE DE BACKUP
+# ========================
+
+@app.route("/api/jobs/<int:job_id>/abortar", methods=["POST"])
+@login_required
+def abortar_job(job_id):
+    """Aborta o backup em execução de um job."""
+    resultado = backup_engine.abortar_backup(job_id)
+    if resultado:
+        return jsonify({"ok": True, "mensagem": f"Sinal de abort enviado para o job {job_id}."})
+    return jsonify({"ok": False, "mensagem": "Este job não está em execução."})
+
+
+@app.route("/api/jobs/<int:job_id>/progresso")
+@login_required
+def progresso_job(job_id):
+    """Retorna o progresso atual de um job."""
+    prog = backup_engine.get_progresso(job_id)
+    return jsonify(prog)
+
+
+@app.route("/api/jobs/fila")
+@login_required
+def fila_jobs():
+    """Retorna o status da fila de backups."""
+    fila = backup_engine.obter_fila()
+    return jsonify(fila)
+
+
+# ========================
 # CONFIGURAÇÕES
 # ========================
 

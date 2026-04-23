@@ -26,6 +26,13 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 _progresso = {}
 _lock = threading.Lock()
 
+# Sistema de fila sequencial
+import queue
+_fila_backup = queue.Queue()
+_worker_ativo = False
+_abort_flags = {}  # job_id -> threading.Event()
+_job_em_execucao = None  # ID do job rodando agora
+
 
 def log(msg):
     """Print seguro para Windows (evita crash com emojis)."""
@@ -98,6 +105,10 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None):
 
             # Se for um unico arquivo
             if os.path.isfile(caminho_origem):
+                # Verifica abort
+                if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                    raise InterruptedError("Backup abortado pelo usuario.")
+                
                 arcname = os.path.basename(caminho_origem)
                 try:
                     zf.write(caminho_origem, arcname)
@@ -114,6 +125,10 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None):
             else:
                 for root, dirs, files in os.walk(caminho_origem):
                     for arquivo in files:
+                        # Verifica abort
+                        if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                            raise InterruptedError("Backup abortado pelo usuario.")
+                        
                         caminho_completo = os.path.join(root, arquivo)
                         arcname = os.path.relpath(caminho_completo, caminho_origem)
                         
@@ -335,18 +350,31 @@ def executar_backup(job_id):
     except Exception as e:
         duracao = time.time() - inicio
         erro_msg = str(e)
-        log(f"[Backup] ERRO - Job '{job['nome']}': {erro_msg}")
+        
+        # Verifica se foi um abort
+        abortado = job_id in _abort_flags and _abort_flags[job_id].is_set()
+        if abortado:
+            erro_msg = "Backup abortado pelo usuario."
+            _set_progresso(job_id, "abortado", 0, erro_msg)
+            models.registrar_fim(exec_id, "abortado", 0, 0, job["destino_tipo"], erro_msg)
+        else:
+            _set_progresso(job_id, "erro", 0, f"Erro: {erro_msg}")
+            models.registrar_fim(exec_id, "erro", 0, 0, job["destino_tipo"], erro_msg)
+        
+        log(f"[Backup] {'ABORTADO' if abortado else 'ERRO'} - Job '{job['nome']}': {erro_msg}")
 
-        _set_progresso(job_id, "erro", 0, f"Erro: {erro_msg}")
-        models.registrar_fim(exec_id, "erro", 0, 0, job["destino_tipo"], erro_msg)
-
-        # Notifica erro no WhatsApp
-        try:
-            notificador.notificar_erro(config, job["nome"], erro_msg)
-        except Exception as ne:
-            log(f"[Backup] Erro ao notificar WhatsApp: {ne}")
+        # Notifica erro no WhatsApp (só se não foi abort manual)
+        if not abortado:
+            try:
+                notificador.notificar_erro(config, job["nome"], erro_msg)
+            except Exception as ne:
+                log(f"[Backup] Erro ao notificar WhatsApp: {ne}")
 
     finally:
+        global _job_em_execucao
+        _job_em_execucao = None
+        _abort_flags.pop(job_id, None)
+        
         # Limpa ZIP temporário
         if os.path.exists(caminho_zip_temp):
             try:
@@ -361,8 +389,61 @@ def executar_backup(job_id):
         threading.Thread(target=limpar, daemon=True).start()
 
 
+def _worker_fila():
+    """Worker que processa a fila de backups sequencialmente."""
+    global _worker_ativo, _job_em_execucao
+    _worker_ativo = True
+    
+    while not _fila_backup.empty():
+        try:
+            job_id = _fila_backup.get_nowait()
+        except queue.Empty:
+            break
+        
+        _job_em_execucao = job_id
+        _abort_flags[job_id] = threading.Event()
+        
+        log(f"[Fila] Iniciando backup do job {job_id} (restam {_fila_backup.qsize()} na fila)")
+        executar_backup(job_id)
+        _fila_backup.task_done()
+    
+    _worker_ativo = False
+    _job_em_execucao = None
+    log("[Fila] Todos os backups da fila foram concluidos.")
+
+
 def executar_backup_async(job_id):
-    """Inicia o backup em uma thread separada."""
-    t = threading.Thread(target=executar_backup, args=(job_id,), daemon=True)
-    t.start()
-    return t
+    """Adiciona o job na fila de backups. Se o worker não estiver rodando, inicia."""
+    global _worker_ativo
+    
+    _fila_backup.put(job_id)
+    log(f"[Fila] Job {job_id} adicionado a fila (posicao: {_fila_backup.qsize()})")
+    
+    if not _worker_ativo:
+        t = threading.Thread(target=_worker_fila, daemon=True)
+        t.start()
+    
+    return None
+
+
+def abortar_backup(job_id):
+    """Aborta o backup de um job em execução."""
+    if job_id in _abort_flags:
+        _abort_flags[job_id].set()
+        log(f"[Abort] Sinal de abort enviado para o job {job_id}")
+        return True
+    return False
+
+
+def obter_job_em_execucao():
+    """Retorna o ID do job que está rodando no momento."""
+    return _job_em_execucao
+
+
+def obter_fila():
+    """Retorna informações da fila de backups."""
+    return {
+        "em_execucao": _job_em_execucao,
+        "tamanho_fila": _fila_backup.qsize(),
+        "worker_ativo": _worker_ativo
+    }
