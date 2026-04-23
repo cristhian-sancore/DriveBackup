@@ -32,7 +32,31 @@ if getattr(sys, 'frozen', False):
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 else:
     app = Flask(__name__)
-app.secret_key = "drivebackup_secret_2024_fassil"
+
+# Secret key dinâmica: gerada no primeiro boot e salva no banco
+import uuid
+def _obter_secret_key():
+    """Busca ou gera a secret_key única desta instalação."""
+    try:
+        conn = models.get_db()
+        row = conn.execute("SELECT valor FROM configuracao WHERE chave='secret_key'").fetchone()
+        if row and row['valor']:
+            key = row['valor']
+        else:
+            key = str(uuid.uuid4()) + str(uuid.uuid4())
+            conn.execute("INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('secret_key', ?)", (key,))
+            conn.commit()
+        conn.close()
+        return key
+    except:
+        return str(uuid.uuid4())  # Fallback se o banco ainda não existir
+
+models.init_db()
+app.secret_key = _obter_secret_key()
+
+# Suporte a reverse proxy (Cloudflare Tunnel, Nginx, etc.)
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # ========================
 # LOGIN & AUTENTICAÇÃO
@@ -46,16 +70,70 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# Dicionário simples para Rate Limiting no Login (ip -> {tentativas, bloqueado_ate})
+_login_attempts = {}
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    ip_cliente = request.remote_addr
+    agora = time.time()
+    
+    # Verifica Rate Limiting
+    if ip_cliente in _login_attempts:
+        info = _login_attempts[ip_cliente]
+        if info.get("bloqueado_ate", 0) > agora:
+            flash("Muitas tentativas falhas. Tente novamente em alguns minutos.", "error")
+            return render_template("login.html")
+        elif info.get("bloqueado_ate", 0) <= agora and info.get("bloqueado_ate", 0) != 0:
+            # Tempo de bloqueio expirou, reseta
+            _login_attempts[ip_cliente] = {"tentativas": 0, "bloqueado_ate": 0}
+
     if request.method == "POST":
         senha = request.form.get("senha", "")
-        if senha == "f@$p3l":
-            session["logged_in"] = True
-            flash("Login realizado com sucesso!", "success")
-            return redirect(request.args.get("next") or url_for("dashboard"))
+        
+        # Obtém a senha do banco (ou cria a padrão 'f@$p3l')
+        conn = models.get_db()
+        row = conn.execute("SELECT valor FROM configuracao WHERE chave='senha_admin'").fetchone()
+        if row and row['valor']:
+            senha_hash = row['valor']
         else:
-            flash("Senha incorreta.", "error")
+            senha_hash = generate_password_hash("f@$p3l")
+            conn.execute("INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('senha_admin', ?)", (senha_hash,))
+            conn.commit()
+        conn.close()
+
+        if check_password_hash(senha_hash, senha) or senha == "f@$p3l": # Fallback temporário para transição
+            # Atualiza o hash se ele usou a senha em texto puro por segurança
+            if senha == "f@$p3l":
+                conn = models.get_db()
+                conn.execute("UPDATE configuracao SET valor=? WHERE chave='senha_admin'", (generate_password_hash("f@$p3l"),))
+                conn.commit()
+                conn.close()
+                
+            session["logged_in"] = True
+            _login_attempts.pop(ip_cliente, None) # Reseta tentativas com sucesso
+            flash("Login realizado com sucesso!", "success")
+            next_url = request.args.get("next", "")
+            # Previne Open Redirect: só aceita URLs internas
+            if not next_url or not next_url.startswith("/"):
+                next_url = url_for("dashboard")
+            return redirect(next_url)
+        else:
+            # Incrementa tentativas
+            if ip_cliente not in _login_attempts:
+                _login_attempts[ip_cliente] = {"tentativas": 0, "bloqueado_ate": 0}
+            
+            _login_attempts[ip_cliente]["tentativas"] += 1
+            tentativas = _login_attempts[ip_cliente]["tentativas"]
+            
+            if tentativas >= 5:
+                _login_attempts[ip_cliente]["bloqueado_ate"] = agora + 300 # Bloqueia por 5 minutos
+                flash("Muitas tentativas falhas. Bloqueado por 5 minutos.", "error")
+            else:
+                flash(f"Senha incorreta. Tentativa {tentativas}/5.", "error")
+
     return render_template("login.html")
 
 @app.route("/logout")
@@ -647,6 +725,19 @@ def api_local_explorar():
                 discos.append({"nome": disco, "caminho": disco, "tipo": "dir"})
         return jsonify({"itens": discos, "caminho_atual": ""})
     
+    # Segurança: Normaliza e resolve o caminho real (evita ../)
+    caminho = os.path.abspath(caminho)
+    
+    # Pastas bloqueadas por segurança
+    pastas_bloqueadas = [
+        "c:\\windows", 
+        "c:\\program files",
+        "c:\\program files (x86)",
+        "c:\\programdata"
+    ]
+    if any(caminho.lower().startswith(b) for b in pastas_bloqueadas):
+        return jsonify({"erro": "Acesso a pastas do sistema bloqueado por seguranca.", "itens": [], "caminho_atual": caminho})
+
     # Se houver caminho, lista o conteúdo do diretório
     if not os.path.exists(caminho):
         return jsonify({"erro": "Caminho não encontrado.", "itens": [], "caminho_atual": caminho})
