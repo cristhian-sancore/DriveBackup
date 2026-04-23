@@ -132,13 +132,26 @@
                                 <i class="fas fa-check-circle text-success"></i>
                             {% elif exec.status == 'erro' %}
                                 <i class="fas fa-times-circle text-danger"></i>
+                            {% elif exec.status == 'abortado' %}
+                                <i class="fas fa-ban text-warning"></i>
                             {% else %}
-                                <i class="fas fa-spinner fa-spin text-info"></i>
+                                <i class="fas fa-sync fa-spin text-info" id="exec-icon-{{ exec.job_id }}"></i>
                             {% endif %}
                         </div>
-                        <div class="exec-info">
+                        <div class="exec-info" style="flex:1;">
                             <strong>{{ exec.job_nome }}</strong>
                             <span class="text-muted">{{ exec.inicio[:16].replace('T', ' ') }}</span>
+                            {% if exec.status == 'em_andamento' %}
+                            <div id="dash-progress-{{ exec.job_id }}" style="margin-top: 6px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+                                    <small id="dash-label-{{ exec.job_id }}" style="color: var(--text-muted); font-size: 0.75rem;">Processando...</small>
+                                    <small id="dash-pct-{{ exec.job_id }}" style="color: var(--color-primary); font-weight: 600; font-size: 0.75rem;">0%</small>
+                                </div>
+                                <div style="height: 4px; background: var(--bg-surface); border-radius: 2px; overflow: hidden;">
+                                    <div id="dash-bar-{{ exec.job_id }}" style="width: 0%; height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.3s;"></div>
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
                         <div class="exec-meta">
                             {% if exec.status == 'sucesso' and exec.tamanho_zip %}
@@ -153,6 +166,10 @@
                                 </span>
                             {% elif exec.status == 'erro' %}
                                 <span class="badge badge-red">Falhou</span>
+                            {% elif exec.status == 'abortado' %}
+                                <span class="badge badge-yellow" style="background: #f59e0b; color: #000;">Abortado</span>
+                            {% elif exec.status == 'em_andamento' %}
+                                <span class="badge badge-blue" id="dash-badge-{{ exec.job_id }}">Executando</span>
                             {% endif %}
                         </div>
                     </div>
@@ -167,4 +184,55 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // IDs de jobs que estão em andamento
+    const jobsEmAndamento = [{% for exec in execucoes %}{% if exec.status == 'em_andamento' %}{{ exec.job_id }},{% endif %}{% endfor %}];
+    
+    function atualizarProgressoDash() {
+        if (jobsEmAndamento.length === 0) return;
+        
+        jobsEmAndamento.forEach(jobId => {
+            fetch(`/api/jobs/${jobId}/progresso`)
+                .then(r => r.json())
+                .then(data => {
+                    const bar = document.getElementById(`dash-bar-${jobId}`);
+                    const label = document.getElementById(`dash-label-${jobId}`);
+                    const pct = document.getElementById(`dash-pct-${jobId}`);
+                    const badge = document.getElementById(`dash-badge-${jobId}`);
+                    
+                    if (!bar) return;
+                    
+                    if (data.etapa === 'idle') return;
+                    
+                    bar.style.width = data.percentual + '%';
+                    pct.textContent = data.percentual + '%';
+                    label.textContent = data.mensagem || data.etapa;
+                    
+                    if (data.etapa === 'concluido') {
+                        bar.style.background = '#22c55e';
+                        pct.textContent = '100%';
+                        if (badge) badge.textContent = 'Concluído!';
+                        // Recarrega a página após 3s para atualizar o status
+                        setTimeout(() => window.location.reload(), 3000);
+                    } else if (data.etapa === 'erro' || data.etapa === 'abortado') {
+                        bar.style.background = '#ef4444';
+                        if (badge) {
+                            badge.textContent = data.etapa === 'abortado' ? 'Abortado' : 'Erro';
+                            badge.className = 'badge badge-red';
+                        }
+                        setTimeout(() => window.location.reload(), 3000);
+                    }
+                })
+                .catch(() => {});
+        });
+    }
+    
+    if (jobsEmAndamento.length > 0) {
+        setInterval(atualizarProgressoDash, 2000);
+        atualizarProgressoDash();
+    }
+</script>
 {% endblock %}
