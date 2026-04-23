@@ -259,6 +259,11 @@ def api_sistema_ping():
     """Endpoint simples para verificar se o sistema voltou."""
     return jsonify({"ok": True})
 
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def obter_versao_local():
     """Retorna o SHA do último commit baixado."""
     version_file = os.path.join(BASE_DIR, "data", "version.json")
@@ -386,28 +391,36 @@ setlocal
 cd /d "%~dp0"
 echo Parando o servico {service_name}...
 net stop {service_name}
+timeout /t 3 /nobreak > nul
 taskkill /f /im BKP_FASPEL.exe > nul 2>&1
 timeout /t 5 /nobreak > nul
 
 if exist "BKP_FASPEL_Setup.exe" (
     echo Atualizando para a nova versao (Setup)...
+    timeout /t 1 /nobreak > nul
     copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
     if %errorlevel% equ 0 (
+        echo Sucesso ao copiar Setup!
         del "BKP_FASPEL_Setup.exe"
     )
 )
 
+timeout /t 2 /nobreak > nul
+
 if exist "BKP_FASPEL_NEW.exe" (
     echo Atualizando para a nova versao (NEW)...
+    timeout /t 1 /nobreak > nul
     copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
     if %errorlevel% equ 0 (
+        echo Sucesso ao copiar NEW!
         del "BKP_FASPEL_NEW.exe"
     )
 )
 
-timeout /t 2 /nobreak > nul
+timeout /t 3 /nobreak > nul
 echo Reiniciando o servico {service_name}...
 net start {service_name}
+timeout /t 2 /nobreak > nul
 del "%~f0" & exit
 """
         with open(bat_path, "w") as f:
