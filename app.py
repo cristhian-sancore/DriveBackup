@@ -320,10 +320,23 @@ def api_sistema_atualizar():
         sha_res = requests.get(sha_url, headers=headers, timeout=10)
         latest_sha = sha_res.json().get("sha") if sha_res.status_code == 200 else None
 
-        # 2. Baixa o EXE diretamente usando a URL RAW (mais robusta para arquivos grandes)
-        # Funciona para público e privado (se o token for enviado no header)
-        exe_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/BKP_FASPEL_Setup.exe"
+        # 2. Obtém a URL de download via API para garantir que o arquivo existe
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL_Setup.exe?ref=main"
+        res = requests.get(api_url, headers=headers, timeout=10)
         
+        exe_url = None
+        if res.status_code == 200:
+            exe_url = res.json().get("download_url")
+        else:
+            # Tenta sem o _Setup como fallback
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL.exe?ref=main"
+            res = requests.get(api_url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                exe_url = res.json().get("download_url")
+
+        if not exe_url:
+            return jsonify({"ok": False, "mensagem": f"Arquivo executável não encontrado no GitHub (404)."})
+
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -331,9 +344,9 @@ def api_sistema_atualizar():
             
         exe_path = os.path.join(base_dir, "BKP_FASPEL_Setup.exe")
         
-        response = requests.get(exe_url, headers=headers, stream=True, timeout=30)
+        response = requests.get(exe_url, stream=True, timeout=60)
         if response.status_code != 200:
-            return jsonify({"ok": False, "mensagem": f"Erro ao baixar EXE ({response.status_code}): {response.text}"})
+            return jsonify({"ok": False, "mensagem": f"Erro ao baixar arquivo ({response.status_code})"})
             
         with open(exe_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
