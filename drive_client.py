@@ -279,10 +279,23 @@ def upload_arquivo(json_path, caminho_local, parent_id, callback=None):
         )
         
         response = None
+        retry_count = 0
+        max_retries = 5
+        
         while response is None:
-            status, response = request.next_chunk()
-            if status and callback:
-                callback(status.progress())
+            try:
+                status, response = request.next_chunk()
+                if status and callback:
+                    callback(status.progress())
+                retry_count = 0 # Reseta retries ao ter sucesso em um chunk
+            except Exception as e:
+                # Captura erro de SSL/EOF ou timeout
+                if ("EOF" in str(e) or "violation of protocol" in str(e) or "timeout" in str(e).lower()) and retry_count < max_retries:
+                    retry_count += 1
+                    import time
+                    time.sleep(2 * retry_count) # Backoff exponencial simples
+                    continue
+                raise Exception(f"Erro no upload após {retry_count} tentativas: {e}")
         
         if callback:
             callback(1.0)
