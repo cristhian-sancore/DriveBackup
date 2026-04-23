@@ -321,7 +321,7 @@ def api_sistema_atualizar():
 
         # 2. Baixa o EXE diretamente
         # Se o repo for privado, precisamos usar a API de 'contents' com header de aceitação raw
-        exe_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL_Setup.exe?ref=main"
+        exe_url = f"https://api.github.com/repos/{owner}/{repo}/contents/BKP_FASPEL.exe?ref=main"
         headers["Accept"] = "application/vnd.github.v3.raw"
         
         if getattr(sys, 'frozen', False):
@@ -329,7 +329,7 @@ def api_sistema_atualizar():
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
-        exe_path = os.path.join(base_dir, "BKP_FASPEL_Setup.exe")
+        exe_path = os.path.join(base_dir, "BKP_FASPEL_NEW.exe")
         
         response = requests.get(exe_url, headers=headers, stream=True, timeout=30)
         if response.status_code != 200:
@@ -368,9 +368,10 @@ echo Parando o servico {service_name}...
 net stop {service_name}
 timeout /t 2 /nobreak > nul
 
-if exist "BKP_FASPEL_Setup.exe" (
+if exist "BKP_FASPEL_NEW.exe" (
     echo Atualizando para a nova versao...
-    copy /y "BKP_FASPEL_Setup.exe" "BKP_FASPEL.exe"
+    copy /y "BKP_FASPEL_NEW.exe" "BKP_FASPEL.exe"
+    del "BKP_FASPEL_NEW.exe"
 )
 
 echo Reiniciando o servico {service_name}...
