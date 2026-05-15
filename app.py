@@ -848,6 +848,16 @@ if __name__ == "__main__":
         uninst_origem = os.path.join(sys._MEIPASS, "Desinstalar_BKP.exe")
         uninst_destino = os.path.join(PASTA_DESTINO, "Desinstalar_BKP.exe")
         
+        # Para o serviço existente antes de tentar copiar arquivos (evita WinError 32)
+        if os.path.exists(nssm_destino):
+            print("[*] Parando servico existente para atualizacao...")
+            subprocess.run([nssm_destino, "stop", NOME_SERVICO], capture_output=True)
+            subprocess.run(["taskkill", "/f", "/im", "BKP_FASPEL.exe", "/t"], capture_output=True)
+            time.sleep(2)
+        else:
+            subprocess.run(["net", "stop", NOME_SERVICO], capture_output=True)
+            subprocess.run(["taskkill", "/f", "/im", "BKP_FASPEL.exe", "/t"], capture_output=True)
+
         try:
             print("[*] Copiando sistema...")
             shutil.copy2(sys.executable, exe_destino)
