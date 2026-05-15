@@ -611,23 +611,36 @@ def api_drive_criar_pasta():
 @login_required
 def auth_google():
     """Inicia o fluxo de autorização do Google Drive via Web."""
-    # Busca todos os JSONs na pasta data para encontrar um que seja OAuth (web ou installed)
-    json_path = None
-    data_dir = os.path.join(BASE_DIR, "data")
-    if os.path.exists(data_dir):
-        for arq in os.listdir(data_dir):
-            if arq.endswith(".json"):
-                caminho = os.path.join(data_dir, arq)
-                try:
-                    with open(caminho, 'r') as f:
-                        dados = json.load(f)
-                        if "web" in dados or "installed" in dados:
-                            json_path = caminho
-                            # Se achou, já salva como padrão se não houver um
-                            models.salvar_config({"google_json_path": json_path})
-                            break
-                except:
-                    continue
+    config = models.obter_config()
+    json_path = config.get("google_json_path")
+    
+    # Valida se o caminho atual já é um OAuth2
+    is_oauth = False
+    if json_path and os.path.exists(json_path):
+        try:
+            with open(json_path, 'r') as f:
+                dados = json.load(f)
+                if "web" in dados or "installed" in dados:
+                    is_oauth = True
+        except: pass
+    
+    if not is_oauth:
+        # Se não é OAuth, busca um compatível na pasta data
+        json_path = None
+        data_dir = os.path.join(BASE_DIR, "data")
+        if os.path.exists(data_dir):
+            for arq in sorted(os.listdir(data_dir)): # Ordenado para consistência
+                if arq.endswith(".json"):
+                    caminho = os.path.join(data_dir, arq)
+                    try:
+                        with open(caminho, 'r') as f:
+                            dados = json.load(f)
+                            if "web" in dados or "installed" in dados:
+                                json_path = caminho
+                                # Atualiza config apenas se não houver um funcional
+                                models.salvar_config({"google_json_path": json_path})
+                                break
+                    except: continue
 
     if not json_path:
         flash("Arquivo de credenciais OAuth (client_secret.json) não encontrado na pasta data. Certifique-se de que o arquivo é do tipo 'Web' ou 'Desktop'.", "error")
@@ -647,8 +660,8 @@ def auth_google():
         )
         
         session['oauth_state'] = state
-        # O code_verifier é necessário para as versões novas da biblioteca (PKCE)
         session['oauth_verifier'] = flow.code_verifier
+        session['oauth_json_path'] = json_path # Salva para o callback
         
         return redirect(authorization_url)
     except Exception as e:
@@ -663,19 +676,22 @@ def oauth2callback():
     try:
         state = session.get('oauth_state')
         
-        # Localiza o JSON correto novamente para garantir consistência
-        json_path = None
-        data_dir = os.path.join(BASE_DIR, "data")
-        for arq in os.listdir(data_dir):
-            if arq.endswith(".json"):
-                caminho = os.path.join(data_dir, arq)
-                try:
-                    with open(caminho, 'r') as f:
-                        dados = json.load(f)
-                        if "web" in dados or "installed" in dados:
-                            json_path = caminho
-                            break
-                except: continue
+        # Localiza o JSON correto salvo na sessão
+        json_path = session.get('oauth_json_path')
+        
+        if not json_path or not os.path.exists(json_path):
+            # Fallback: busca novamente se perdeu a sessão
+            data_dir = os.path.join(BASE_DIR, "data")
+            for arq in sorted(os.listdir(data_dir)):
+                if arq.endswith(".json"):
+                    caminho = os.path.join(data_dir, arq)
+                    try:
+                        with open(caminho, 'r') as f:
+                            dados = json.load(f)
+                            if "web" in dados or "installed" in dados:
+                                json_path = caminho
+                                break
+                    except: continue
         
         if not json_path:
             raise Exception("Arquivo client_secret não encontrado no callback.")

@@ -43,7 +43,13 @@ def autenticar(json_path, flow_web=False):
                 _service = build('drive', 'v3', credentials=creds)
                 return _service
             except Exception as e:
-                print(f"Erro ao carregar token existente: {e}")
+                if "invalid_grant" in str(e).lower():
+                    print(f"[DRIVE] Token existente invalidado (invalid_grant). Removendo {TOKEN_FILE}")
+                    if os.path.exists(TOKEN_FILE):
+                        try: os.remove(TOKEN_FILE)
+                        except: pass
+                else:
+                    print(f"Erro ao carregar token existente: {e}")
         
         raise FileNotFoundError(f"Arquivo de credenciais nao encontrado: {json_path}")
     
@@ -66,9 +72,22 @@ def autenticar(json_path, flow_web=False):
         # Se não tem token ou expirou
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                # Renova o token automaticamente
-                creds.refresh(Request())
-            elif not flow_web:
+                try:
+                    # Renova o token automaticamente
+                    creds.refresh(Request())
+                except Exception as e:
+                    if "invalid_grant" in str(e).lower():
+                        print(f"[DRIVE] Falha ao renovar token (invalid_grant). Removendo {TOKEN_FILE}")
+                        if os.path.exists(TOKEN_FILE):
+                            try: os.remove(TOKEN_FILE)
+                            except: pass
+                        # Força nova autenticação (se for flow_web, o app.py cuida)
+                        if flow_web: return None
+                        creds = None
+                    else:
+                        raise e
+            
+            if (not creds or not creds.valid) and not flow_web:
                 # Primeira vez: abre o navegador local (apenas se não for via WEB)
                 flow = InstalledAppFlow.from_client_secrets_file(json_path, SCOPES)
                 creds = flow.run_local_server(port=0, prompt='consent', access_type='offline')
