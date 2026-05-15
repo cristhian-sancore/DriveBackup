@@ -67,35 +67,35 @@ def autenticar(json_path, flow_web=False):
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
         
         if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            try:
+                creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            except:
+                creds = None
         
-        # Se não tem token ou expirou
+        # Se expirou, tenta renovar e SALVAR
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(TOKEN_FILE, 'w') as token:
+                    token.write(creds.to_json())
+                print("[DRIVE] Token renovado e salvo com sucesso.")
+            except Exception as e:
+                print(f"[DRIVE] Erro ao renovar token: {e}")
+                if "invalid_grant" in str(e).lower():
+                    if os.path.exists(TOKEN_FILE): os.remove(TOKEN_FILE)
+                creds = None
+
+        # Se não é válido, precisamos de nova autenticação
         if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    # Renova o token automaticamente
-                    creds.refresh(Request())
-                except Exception as e:
-                    if "invalid_grant" in str(e).lower():
-                        print(f"[DRIVE] Falha ao renovar token (invalid_grant). Removendo {TOKEN_FILE}")
-                        if os.path.exists(TOKEN_FILE):
-                            try: os.remove(TOKEN_FILE)
-                            except: pass
-                        # Força nova autenticação (se for flow_web, o app.py cuida)
-                        if flow_web: return None
-                        creds = None
-                    else:
-                        raise e
-            
-            if (not creds or not creds.valid) and not flow_web:
-                # Primeira vez: abre o navegador local (apenas se não for via WEB)
-                flow = InstalledAppFlow.from_client_secrets_file(json_path, SCOPES)
-                creds = flow.run_local_server(port=0, prompt='consent', access_type='offline')
-            else:
-                # Se for flow_web, não fazemos nada aqui, o app.py resolve
+            if flow_web:
+                # O app.py tratará o fluxo web
                 return None
             
-            # Salva o token para não precisar autorizar novamente
+            # Fluxo Desktop (Navegador Local)
+            flow = InstalledAppFlow.from_client_secrets_file(json_path, SCOPES)
+            creds = flow.run_local_server(port=0, prompt='consent', access_type='offline')
+            
+            # Salva o novo token
             with open(TOKEN_FILE, 'w') as token:
                 token.write(creds.to_json())
     
