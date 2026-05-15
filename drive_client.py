@@ -122,12 +122,14 @@ def get_service(json_path=None):
     return _service
 
 
-def testar_conexao(json_path):
+def testar_conexao(json_path, flow_web=False):
     """Testa se as credenciais funcionam."""
     try:
         global _service
         _service = None  # Força re-autenticação
-        service = autenticar(json_path)
+        service = autenticar(json_path, flow_web=flow_web)
+        if service is None:
+            return False, "Google Drive não autenticado. Realize o login pelo painel."
         about = service.about().get(fields="user, storageQuota").execute()
         email = about.get("user", {}).get("emailAddress", "Desconhecido")
         quota = about.get("storageQuota", {})

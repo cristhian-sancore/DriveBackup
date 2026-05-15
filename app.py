@@ -345,7 +345,7 @@ def settings_view():
 def testar_drive():
     config = models.obter_config()
     json_path = config.get("google_json_path", "")
-    ok, msg = drive_client.testar_conexao(json_path)
+    ok, msg = drive_client.testar_conexao(json_path, flow_web=True)
     return jsonify({"ok": ok, "mensagem": msg})
 
 
@@ -627,7 +627,7 @@ def auth_google():
     if not is_oauth:
         # Se não é OAuth, busca um compatível na pasta data
         json_path = None
-        data_dir = os.path.join(BASE_DIR, "data")
+        data_dir = models.DATA_DIR
         if os.path.exists(data_dir):
             for arq in sorted(os.listdir(data_dir)): # Ordenado para consistência
                 if arq.endswith(".json"):
@@ -681,7 +681,7 @@ def oauth2callback():
         
         if not json_path or not os.path.exists(json_path):
             # Fallback: busca novamente se perdeu a sessão
-            data_dir = os.path.join(BASE_DIR, "data")
+            data_dir = models.DATA_DIR
             for arq in sorted(os.listdir(data_dir)):
                 if arq.endswith(".json"):
                     caminho = os.path.join(data_dir, arq)
@@ -813,7 +813,7 @@ def inicializar():
     json_path = models.detectar_e_atualizar_google_json()
     if json_path:
         print(f"[*] Credenciais encontradas: {os.path.basename(json_path)}")
-        ok, msg = drive_client.testar_conexao(json_path)
+        ok, msg = drive_client.testar_conexao(json_path, flow_web=True)
         if ok:
             print(f"[OK] Google Drive conectado: {msg}")
         else:
