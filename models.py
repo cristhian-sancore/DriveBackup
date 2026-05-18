@@ -350,19 +350,7 @@ def detectar_e_atualizar_google_json():
 
     arquivos = [f for f in os.listdir(DATA_DIR) if f.endswith(".json") and "version" not in f]
     
-    # Procura primeiro por Service Account
-    for arq in arquivos:
-        caminho = os.path.join(DATA_DIR, arq)
-        try:
-            with open(caminho, 'r', encoding='utf-8') as f:
-                dados = json.load(f)
-                if dados.get("type") == "service_account":
-                    salvar_config({"google_json_path": caminho})
-                    return caminho
-        except:
-            continue
-            
-    # Se não tem Service Account, busca qualquer OAuth (web/installed), 
+    # Procura primeiro por OAuth (web/installed), 
     # que com certeza incluirá o DEFAULT_OAUTH_PATH que acabamos de criar!
     for arq in arquivos:
         caminho = os.path.join(DATA_DIR, arq)
@@ -370,6 +358,18 @@ def detectar_e_atualizar_google_json():
             with open(caminho, 'r', encoding='utf-8') as f:
                 dados = json.load(f)
                 if "web" in dados or "installed" in dados:
+                    salvar_config({"google_json_path": caminho})
+                    return caminho
+        except:
+            continue
+            
+    # Procura Service Account como plano B
+    for arq in arquivos:
+        caminho = os.path.join(DATA_DIR, arq)
+        try:
+            with open(caminho, 'r', encoding='utf-8') as f:
+                dados = json.load(f)
+                if dados.get("type") == "service_account":
                     salvar_config({"google_json_path": caminho})
                     return caminho
         except:

@@ -48,6 +48,14 @@ def autenticar(json_path, flow_web=False):
                     if os.path.exists(TOKEN_FILE):
                         try: os.remove(TOKEN_FILE)
                         except: pass
+                    
+                    try:
+                        import models, notificador
+                        config = models.obter_config()
+                        if not flow_web:
+                            notificador.notificar_auth_necessaria(config)
+                    except Exception as ex:
+                        print("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
                 else:
                     print(f"Erro ao carregar token existente: {e}")
         
@@ -83,6 +91,14 @@ def autenticar(json_path, flow_web=False):
                 print(f"[DRIVE] Erro ao renovar token: {e}")
                 if "invalid_grant" in str(e).lower():
                     if os.path.exists(TOKEN_FILE): os.remove(TOKEN_FILE)
+                
+                try:
+                    import models, notificador
+                    config = models.obter_config()
+                    if not flow_web:
+                        notificador.notificar_auth_necessaria(config)
+                except Exception as ex:
+                    print("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
                 creds = None
 
         # Se não é válido, precisamos de nova autenticação

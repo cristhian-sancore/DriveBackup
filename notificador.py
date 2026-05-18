@@ -104,3 +104,17 @@ def testar_notificacao(config):
         f"*Data:* {agora}"
     )
     return enviar_whatsapp(config, msg)
+
+
+def notificar_auth_necessaria(config):
+    """Envia notificação urgente de que o token do Google Drive expirou ou foi revogado."""
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    msg = (
+        f"⚠️ *ATENÇÃO: AÇÃO NECESSÁRIA!* ⚠️\n\n"
+        f"A conexão com o *Google Drive* foi perdida ou a permissão expirou.\n\n"
+        f"Por favor, acesse o painel do DriveBackup o mais rápido possível e clique em *'Conectar via Navegador'* para autorizar o sistema novamente.\n\n"
+        f"Os backups estão *interrompidos* até que a reconexão seja feita.\n\n"
+        f"*Data do Alerta:* {agora}"
+    )
+    return enviar_whatsapp(config, msg)
+
