@@ -892,8 +892,8 @@ if __name__ == "__main__":
                     s = os.path.join(pasta_dados_origem, item)
                     d = os.path.join(pasta_dados_destino, item)
                     if os.path.isfile(s):
-                        # Só copia se o arquivo não existir ou se for o token.json (para atualizar o acesso)
-                        if not os.path.exists(d) or item == "token.json":
+                        # Copia banco se nao existir, MAS FORÇA a copia de credenciais (todos os .json)
+                        if not os.path.exists(d) or item.endswith(".json"):
                             shutil.copy2(s, d)
                     elif os.path.isdir(s):
                         if not os.path.exists(d):
