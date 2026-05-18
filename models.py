@@ -287,21 +287,42 @@ def salvar_config(dados):
 
 def detectar_e_atualizar_google_json():
     """
-    Varre a pasta data em busca de arquivos JSON de credenciais.
-    Prioriza Service Account para automação.
+    Varre a pasta data e a raiz em busca de arquivos JSON de credenciais.
+    Prioriza Service Account para automação (sem precisar gerar token manual).
     """
+    import shutil
     config = obter_config()
-    # Se já tem um caminho válido configurado, não faz nada
-    if config.get("google_json_path") and os.path.exists(config.get("google_json_path")):
-        return config.get("google_json_path")
+    
+    os.makedirs(DATA_DIR, exist_ok=True)
+    
+    # Busca jsons na raiz e joga na pasta data se for Service Account
+    try:
+        for f in os.listdir(BASE_DIR):
+            if f.endswith(".json") and f != "package.json":
+                src = os.path.join(BASE_DIR, f)
+                dst = os.path.join(DATA_DIR, f)
+                if not os.path.exists(dst) and os.path.isfile(src):
+                    try:
+                        with open(src, 'r', encoding='utf-8') as file:
+                            dados = json.load(file)
+                            if dados.get("type") == "service_account":
+                                shutil.copy2(src, dst)
+                    except:
+                        pass
+    except Exception: pass
 
-    # Lista arquivos JSON na pasta data
-    if not os.path.exists(DATA_DIR):
-        return None
+    # Se já tem um caminho válido configurado e funciona
+    if config.get("google_json_path") and os.path.exists(config.get("google_json_path")):
+        try:
+            with open(config.get("google_json_path"), 'r', encoding='utf-8') as f:
+                if json.load(f).get("type") == "service_account":
+                    return config.get("google_json_path")
+        except:
+            pass
 
     arquivos = [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
     
-    # Procura primeiro por Service Account
+    # Procura primeiro por Service Account (Token automático)
     for arq in arquivos:
         caminho = os.path.join(DATA_DIR, arq)
         try:

@@ -832,6 +832,18 @@ if __name__ == "__main__":
         # ==== MODO INSTALADOR (EXE duplo clique) ====
         import shutil
         import subprocess
+        import ctypes
+        
+        def is_admin():
+            try:
+                return ctypes.windll.shell32.IsUserAnAdmin()
+            except:
+                return False
+                
+        if not is_admin():
+            print("[!] Reiniciando com privilegios de Administrador...")
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv[1:]), None, 1)
+            sys.exit(0)
         
         PASTA_DESTINO = r"C:\BKP_FASPEL"
         NOME_SERVICO = "BKP_FASPEL"
@@ -860,9 +872,15 @@ if __name__ == "__main__":
 
         try:
             print("[*] Copiando sistema...")
-            shutil.copy2(sys.executable, exe_destino)
-            shutil.copy2(nssm_origem, nssm_destino)
-            if os.path.exists(uninst_origem):
+            if os.path.abspath(sys.executable).lower() != os.path.abspath(exe_destino).lower():
+                shutil.copy2(sys.executable, exe_destino)
+            else:
+                print("[*] Executando da pasta destino, ignorando copia do proprio executavel.")
+                
+            if os.path.abspath(nssm_origem).lower() != os.path.abspath(nssm_destino).lower():
+                shutil.copy2(nssm_origem, nssm_destino)
+                
+            if os.path.exists(uninst_origem) and os.path.abspath(uninst_origem).lower() != os.path.abspath(uninst_destino).lower():
                 shutil.copy2(uninst_origem, uninst_destino)
             
             # Copia a pasta data (banco de dados e token.json) que vai vim embutida no EXE

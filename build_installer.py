@@ -22,6 +22,7 @@ def build_exe():
         "--noconfirm",
         "--clean",
         "--onefile",
+        "--uac-admin",
         "--name", "BKP_FASPEL_Setup",
         f"--add-data=templates{sep}templates",
         f"--add-data=static{sep}static",
