@@ -288,17 +288,38 @@ def salvar_config(dados):
 def detectar_e_atualizar_google_json():
     """
     Varre a pasta data e a raiz em busca de arquivos JSON de credenciais.
-    Prioriza Service Account para automação (sem precisar gerar token manual).
+    Prioriza Service Account. Caso não haja credenciais, cria o client_secret padrão
+    sozinho, sem exigir que o usuário insira o arquivo manualmente.
     """
     import shutil
     config = obter_config()
     
     os.makedirs(DATA_DIR, exist_ok=True)
     
+    # Credencial OAuth embutida para criar sozinho sem depender do usuário:
+    DEFAULT_OAUTH_PATH = os.path.join(DATA_DIR, "client_secret_default.json")
+    if not os.path.exists(DEFAULT_OAUTH_PATH):
+        try:
+            default_secret = {
+              "web": {
+                "client_id": "359821610078-j3n0u8294af7a0ghih10j1a1hoo90lk8.apps.googleusercontent.com",
+                "project_id": "macro-tributary-468319-u4",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": "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",
+                "redirect_uris": ["http://localhost:7777/", "http://localhost:5555/"]
+              }
+            }
+            with open(DEFAULT_OAUTH_PATH, 'w', encoding='utf-8') as df:
+                json.dump(default_secret, df, indent=4)
+        except Exception as e:
+            print("Erro ao criar token default:", e)
+
     # Busca jsons na raiz e joga na pasta data se for Service Account
     try:
         for f in os.listdir(BASE_DIR):
-            if f.endswith(".json") and f != "package.json":
+            if f.endswith(".json") and f not in ["package.json"]:
                 src = os.path.join(BASE_DIR, f)
                 dst = os.path.join(DATA_DIR, f)
                 if not os.path.exists(dst) and os.path.isfile(src):
@@ -311,18 +332,25 @@ def detectar_e_atualizar_google_json():
                         pass
     except Exception: pass
 
-    # Se já tem um caminho válido configurado e funciona
-    if config.get("google_json_path") and os.path.exists(config.get("google_json_path")):
+    caminho_salvo = config.get("google_json_path")
+    # Se o caminho no banco não existe mais, reseta o valor para não dar FileNotFoundError
+    if caminho_salvo and not os.path.exists(caminho_salvo):
+        caminho_salvo = None
+        salvar_config({"google_json_path": ""})
+
+    # Se já tem um caminho válido configurado e funciona, e é Service Account, mantém
+    if caminho_salvo and os.path.exists(caminho_salvo):
         try:
-            with open(config.get("google_json_path"), 'r', encoding='utf-8') as f:
+            with open(caminho_salvo, 'r', encoding='utf-8') as f:
                 if json.load(f).get("type") == "service_account":
-                    return config.get("google_json_path")
+                    return caminho_salvo
+                return caminho_salvo
         except:
             pass
 
-    arquivos = [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
+    arquivos = [f for f in os.listdir(DATA_DIR) if f.endswith(".json") and "version" not in f]
     
-    # Procura primeiro por Service Account (Token automático)
+    # Procura primeiro por Service Account
     for arq in arquivos:
         caminho = os.path.join(DATA_DIR, arq)
         try:
@@ -334,11 +362,17 @@ def detectar_e_atualizar_google_json():
         except:
             continue
             
-    # Se não achou Service Account, pega o primeiro client_secret que achar
+    # Se não tem Service Account, busca qualquer OAuth (web/installed), 
+    # que com certeza incluirá o DEFAULT_OAUTH_PATH que acabamos de criar!
     for arq in arquivos:
-        if arq.startswith("client_secret"):
-            caminho = os.path.join(DATA_DIR, arq)
-            salvar_config({"google_json_path": caminho})
-            return caminho
-            
+        caminho = os.path.join(DATA_DIR, arq)
+        try:
+            with open(caminho, 'r', encoding='utf-8') as f:
+                dados = json.load(f)
+                if "web" in dados or "installed" in dados:
+                    salvar_config({"google_json_path": caminho})
+                    return caminho
+        except:
+            continue
+
     return None

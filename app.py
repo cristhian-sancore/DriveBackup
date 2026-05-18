@@ -343,8 +343,7 @@ def settings_view():
 @app.route("/settings/testar-drive", methods=["POST"])
 @login_required
 def testar_drive():
-    config = models.obter_config()
-    json_path = config.get("google_json_path", "")
+    json_path = models.detectar_e_atualizar_google_json()
     ok, msg = drive_client.testar_conexao(json_path, flow_web=True)
     return jsonify({"ok": ok, "mensagem": msg})
 
@@ -611,40 +610,12 @@ def api_drive_criar_pasta():
 @login_required
 def auth_google():
     """Inicia o fluxo de autorização do Google Drive via Web."""
-    config = models.obter_config()
-    json_path = config.get("google_json_path")
+    # Chama o detector que agora cria automaticamente se não existir
+    json_path = models.detectar_e_atualizar_google_json()
     
-    # Valida se o caminho atual já é um OAuth2
-    is_oauth = False
-    if json_path and os.path.exists(json_path):
-        try:
-            with open(json_path, 'r') as f:
-                dados = json.load(f)
-                if "web" in dados or "installed" in dados:
-                    is_oauth = True
-        except: pass
-    
-    if not is_oauth:
-        # Se não é OAuth, busca um compatível na pasta data
-        json_path = None
-        data_dir = models.DATA_DIR
-        if os.path.exists(data_dir):
-            for arq in sorted(os.listdir(data_dir)): # Ordenado para consistência
-                if arq.endswith(".json"):
-                    caminho = os.path.join(data_dir, arq)
-                    try:
-                        with open(caminho, 'r') as f:
-                            dados = json.load(f)
-                            if "web" in dados or "installed" in dados:
-                                json_path = caminho
-                                # Atualiza config apenas se não houver um funcional
-                                models.salvar_config({"google_json_path": json_path})
-                                break
-                    except: continue
-
-    if not json_path:
-        flash("Arquivo de credenciais OAuth (client_secret.json) não encontrado na pasta data. Certifique-se de que o arquivo é do tipo 'Web' ou 'Desktop'.", "error")
-        return redirect(url_for('settings_view'))
+    if not json_path or not os.path.exists(json_path):
+        flash("Erro interno: não foi possível gerar ou encontrar as credenciais automáticas.", "error")
+        return redirect(url_for("settings_view"))
 
     try:
         flow = Flow.from_client_secrets_file(
