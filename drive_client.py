@@ -3,6 +3,7 @@ drive_client.py - Wrapper do Google Drive API v3
 Suporta OAuth2 (conta pessoal) e Service Account (Google Workspace)
 """
 import os
+from logger import app_logger
 import json
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
@@ -44,7 +45,7 @@ def autenticar(json_path, flow_web=False):
                 return _service
             except Exception as e:
                 if "invalid_grant" in str(e).lower():
-                    print(f"[DRIVE] Token existente invalidado (invalid_grant). Removendo {TOKEN_FILE}")
+                    app_logger.info(f"[DRIVE] Token existente invalidado (invalid_grant). Removendo {TOKEN_FILE}")
                     if os.path.exists(TOKEN_FILE):
                         try: os.remove(TOKEN_FILE)
                         except: pass
@@ -55,9 +56,9 @@ def autenticar(json_path, flow_web=False):
                         if not flow_web:
                             notificador.notificar_auth_necessaria(config)
                     except Exception as ex:
-                        print("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
+                        app_logger.info("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
                 else:
-                    print(f"Erro ao carregar token existente: {e}")
+                    app_logger.info(f"Erro ao carregar token existente: {e}")
         
         raise FileNotFoundError(f"Arquivo de credenciais nao encontrado: {json_path}")
     
@@ -86,9 +87,9 @@ def autenticar(json_path, flow_web=False):
                 creds.refresh(Request())
                 with open(TOKEN_FILE, 'w') as token:
                     token.write(creds.to_json())
-                print("[DRIVE] Token renovado e salvo com sucesso.")
+                app_logger.info("[DRIVE] Token renovado e salvo com sucesso.")
             except Exception as e:
-                print(f"[DRIVE] Erro ao renovar token: {e}")
+                app_logger.info(f"[DRIVE] Erro ao renovar token: {e}")
                 if "invalid_grant" in str(e).lower():
                     if os.path.exists(TOKEN_FILE): os.remove(TOKEN_FILE)
                 
@@ -98,7 +99,7 @@ def autenticar(json_path, flow_web=False):
                     if not flow_web:
                         notificador.notificar_auth_necessaria(config)
                 except Exception as ex:
-                    print("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
+                    app_logger.info("Erro ao tentar enviar alerta de WhatsApp de auth:", ex)
                 creds = None
 
         # Se não é válido, precisamos de nova autenticação
@@ -191,7 +192,7 @@ def listar_pastas(json_path, parent_id=None):
         
         return [{"id": f["id"], "name": f["name"], "parents": f.get("parents", [])} for f in all_folders]
     except HttpError as e:
-        print(f"Erro ao listar pastas: {e}")
+        app_logger.info(f"Erro ao listar pastas: {e}")
         return []
 
 
@@ -254,7 +255,7 @@ def listar_arvore_completa(json_path):
         
         return roots
     except HttpError as e:
-        print(f"Erro ao montar arvore: {e}")
+        app_logger.info(f"Erro ao montar arvore: {e}")
         return []
 
 

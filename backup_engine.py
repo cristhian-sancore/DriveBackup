@@ -38,14 +38,11 @@ _job_em_execucao = None  # ID do job rodando agora
 TIMEOUT_BACKUP_SEGUNDOS = 3600
 
 
+from logger import app_logger
+
 def log(msg):
-    """Print seguro para Windows (evita crash com emojis)."""
-    try:
-        print(msg)
-    except UnicodeEncodeError:
-        # Remove caracteres não suportados e tenta novamente
-        safe_msg = msg.encode('ascii', errors='replace').decode('ascii')
-        print(safe_msg)
+    """Loga a mensagem no arquivo e no console."""
+    app_logger.info(msg)
 
 
 def get_progresso(job_id):

@@ -13,7 +13,7 @@ def enviar_whatsapp(config, mensagem):
     destino = config.get("whatsapp_destino", "")
     
     if not all([url, instance, apikey, destino]):
-        print("[WhatsApp] Configuração incompleta. Notificação não enviada.")
+        app_logger.info("[WhatsApp] Configuração incompleta. Notificação não enviada.")
         return False
     
     endpoint = f"{url}/message/sendText/{instance}"
@@ -29,13 +29,13 @@ def enviar_whatsapp(config, mensagem):
     try:
         resp = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         if resp.status_code in (200, 201):
-            print(f"[WhatsApp] Notificação enviada para {destino}")
+            app_logger.info(f"[WhatsApp] Notificação enviada para {destino}")
             return True
         else:
-            print(f"[WhatsApp] Erro {resp.status_code}: {resp.text}")
+            app_logger.info(f"[WhatsApp] Erro {resp.status_code}: {resp.text}")
             return False
     except Exception as e:
-        print(f"[WhatsApp] Erro de conexão: {e}")
+        app_logger.info(f"[WhatsApp] Erro de conexão: {e}")
         return False
 
 

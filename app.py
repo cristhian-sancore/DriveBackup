@@ -2,6 +2,7 @@
 app.py - Servidor Flask do DriveBackup
 """
 import os
+from logger import app_logger
 import sys
 import json
 import time
@@ -688,7 +689,7 @@ def oauth2callback():
         flash("Google Drive conectado com sucesso!", "success")
         return redirect(url_for('settings_view'))
     except Exception as e:
-        print(f"ERRO NO CALLBACK OAUTH: {e}")
+        app_logger.info(f"ERRO NO CALLBACK OAUTH: {e}")
         flash(f"Erro no retorno do Google: {str(e)}", "error")
         return redirect(url_for('settings_view'))
 
@@ -780,22 +781,22 @@ def inicializar():
     models.init_db()
     
     # Auto-detecção e Login do Google Drive
-    print("[*] Verificando credenciais do Google Drive...")
+    app_logger.info("[*] Verificando credenciais do Google Drive...")
     json_path = models.detectar_e_atualizar_google_json()
     if json_path:
-        print(f"[*] Credenciais encontradas: {os.path.basename(json_path)}")
+        app_logger.info(f"[*] Credenciais encontradas: {os.path.basename(json_path)}")
         ok, msg = drive_client.testar_conexao(json_path, flow_web=True)
         if ok:
-            print(f"[OK] Google Drive conectado: {msg}")
+            app_logger.info(f"[OK] Google Drive conectado: {msg}")
         else:
-            print(f"[!] Falha ao conectar no Drive: {msg}")
+            app_logger.info(f"[!] Falha ao conectar no Drive: {msg}")
     else:
-        print("[!] Nenhuma credencial do Google Drive encontrada na pasta 'data'.")
+        app_logger.info("[!] Nenhuma credencial do Google Drive encontrada na pasta 'data'.")
 
     scheduler.carregar_todos_jobs()
-    print("=" * 50)
-    print("  DriveBackup - Sistema de Backup")
-    print("=" * 50)
+    app_logger.info("=" * 50)
+    app_logger.info("  DriveBackup - Sistema de Backup")
+    app_logger.info("=" * 50)
 
 
 if __name__ == "__main__":
@@ -812,17 +813,17 @@ if __name__ == "__main__":
                 return False
                 
         if not is_admin():
-            print("[!] Reiniciando com privilegios de Administrador...")
+            app_logger.info("[!] Reiniciando com privilegios de Administrador...")
             ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv[1:]), None, 1)
             sys.exit(0)
         
         PASTA_DESTINO = r"C:\BKP_FASPEL"
         NOME_SERVICO = "BKP_FASPEL"
         
-        print("="*50)
-        print("     INSTALADOR - DRIVEBACKUP FASPEL")
-        print("="*50)
-        print(f"[*] Preparando ambiente em {PASTA_DESTINO}...")
+        app_logger.info("="*50)
+        app_logger.info("     INSTALADOR - DRIVEBACKUP FASPEL")
+        app_logger.info("="*50)
+        app_logger.info(f"[*] Preparando ambiente em {PASTA_DESTINO}...")
         os.makedirs(PASTA_DESTINO, exist_ok=True)
         
         exe_destino = os.path.join(PASTA_DESTINO, "BKP_FASPEL.exe")
@@ -833,7 +834,7 @@ if __name__ == "__main__":
         
         # Para o serviço existente antes de tentar copiar arquivos (evita WinError 32)
         if os.path.exists(nssm_destino):
-            print("[*] Parando servico existente para atualizacao...")
+            app_logger.info("[*] Parando servico existente para atualizacao...")
             subprocess.run([nssm_destino, "stop", NOME_SERVICO], capture_output=True)
             subprocess.run(["taskkill", "/f", "/im", "BKP_FASPEL.exe", "/t"], capture_output=True)
             time.sleep(2)
@@ -842,11 +843,11 @@ if __name__ == "__main__":
             subprocess.run(["taskkill", "/f", "/im", "BKP_FASPEL.exe", "/t"], capture_output=True)
 
         try:
-            print("[*] Copiando sistema...")
+            app_logger.info("[*] Copiando sistema...")
             if os.path.abspath(sys.executable).lower() != os.path.abspath(exe_destino).lower():
                 shutil.copy2(sys.executable, exe_destino)
             else:
-                print("[*] Executando da pasta destino, ignorando copia do proprio executavel.")
+                app_logger.info("[*] Executando da pasta destino, ignorando copia do proprio executavel.")
                 
             if os.path.abspath(nssm_origem).lower() != os.path.abspath(nssm_destino).lower():
                 shutil.copy2(nssm_origem, nssm_destino)
@@ -870,13 +871,13 @@ if __name__ == "__main__":
                         if not os.path.exists(d):
                             shutil.copytree(s, d)
             
-            print("[*] Arquivos instalados!")
+            app_logger.info("[*] Arquivos instalados!")
         except Exception as e:
-            print(f"[X] Erro critico ao copiar arquivos: {e}")
+            app_logger.info(f"[X] Erro critico ao copiar arquivos: {e}")
             input("Pressione ENTER para sair...")
             sys.exit(1)
             
-        print("[*] Instalando Servico do Windows...")
+        app_logger.info("[*] Instalando Servico do Windows...")
         # Para e remove se o servico ja existir
         subprocess.run([nssm_destino, "stop", NOME_SERVICO], capture_output=True)
         subprocess.run([nssm_destino, "remove", NOME_SERVICO, "confirm"], capture_output=True)
@@ -887,14 +888,14 @@ if __name__ == "__main__":
         subprocess.run([nssm_destino, "set", NOME_SERVICO, "Description", "Sistema automatizado de Backup Faspel (DriveBackup)"])
         subprocess.run([nssm_destino, "set", NOME_SERVICO, "Start", "SERVICE_AUTO_START"])
         
-        print("[*] Iniciando o Servico pela primeira vez...")
+        app_logger.info("[*] Iniciando o Servico pela primeira vez...")
         subprocess.run([nssm_destino, "start", NOME_SERVICO])
         
-        print()
-        print("==================================================")
-        print("   INSTALACAO CONCLUIDA COM SUCESSO! ")
-        print("   Acesse o painel web no link: http://localhost:5555")
-        print("==================================================")
+        app_logger.info()
+        app_logger.info("==================================================")
+        app_logger.info("   INSTALACAO CONCLUIDA COM SUCESSO! ")
+        app_logger.info("   Acesse o painel web no link: http://localhost:5555")
+        app_logger.info("==================================================")
         input("Pressione ENTER para fechar essa janela...")
         sys.exit(0)
 
@@ -902,6 +903,6 @@ if __name__ == "__main__":
     inicializar()
     config = models.obter_config()
     porta = int(config.get("porta_servidor", 5555))
-    print(f"  Painel: http://localhost:{porta}")
-    print("=" * 50)
+    app_logger.info(f"  Painel: http://localhost:{porta}")
+    app_logger.info("=" * 50)
     app.run(host="0.0.0.0", port=porta, debug=False)
