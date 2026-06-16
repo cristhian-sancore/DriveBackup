@@ -128,7 +128,17 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
                 
                 arcname = os.path.basename(caminho_origem)
                 try:
-                    zf.write(caminho_origem, arcname)
+                    zinfo = zipfile.ZipInfo.from_file(caminho_origem, arcname)
+                    zinfo.compress_type = zipfile.ZIP_DEFLATED
+                    with zf.open(zinfo, 'w') as dest, open(caminho_origem, 'rb') as src:
+                        while True:
+                            if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                                raise InterruptedError("Backup abortado pelo usuario.")
+                            if inicio:
+                                _verificar_timeout(inicio, job_id)
+                            chunk = src.read(1024 * 1024 * 5) # 5MB
+                            if not chunk: break
+                            dest.write(chunk)
                 except (PermissionError, OSError) as e:
                     log(f"[ZIP] Nao foi possivel compactar {caminho_origem}: {e}")
                 
@@ -156,7 +166,17 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
                             arcname = os.path.join(os.path.basename(caminho_origem), arcname)
 
                         try:
-                            zf.write(caminho_completo, arcname)
+                            zinfo = zipfile.ZipInfo.from_file(caminho_completo, arcname)
+                            zinfo.compress_type = zipfile.ZIP_DEFLATED
+                            with zf.open(zinfo, 'w') as dest, open(caminho_completo, 'rb') as src:
+                                while True:
+                                    if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                                        raise InterruptedError("Backup abortado pelo usuario.")
+                                    if inicio:
+                                        _verificar_timeout(inicio, job_id)
+                                    chunk = src.read(1024 * 1024 * 5) # 5MB
+                                    if not chunk: break
+                                    dest.write(chunk)
                         except (PermissionError, OSError) as e:
                             log(f"[ZIP] Nao foi possivel compactar {caminho_completo}: {e}")
                         
@@ -244,11 +264,26 @@ def limpar_backups_antigos(job, config):
             log(f"[Retencao] Erro ao limpar Drive: {e}")
 
 
-def copiar_local(caminho_zip, pasta_destino):
-    """Copia o ZIP para a pasta de destino local."""
+def copiar_local(caminho_zip, pasta_destino, job_id=None):
+    """Copia o ZIP para a pasta de destino local (em chunks para permitir abort)."""
     os.makedirs(pasta_destino, exist_ok=True)
     destino = os.path.join(pasta_destino, os.path.basename(caminho_zip))
-    shutil.copy2(caminho_zip, destino)
+    
+    with open(caminho_zip, 'rb') as src, open(destino, 'wb') as dst:
+        while True:
+            if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                dst.close()
+                if os.path.exists(destino):
+                    try:
+                        os.remove(destino)
+                    except: pass
+                raise InterruptedError("Backup abortado pelo usuario.")
+            
+            chunk = src.read(1024 * 1024 * 10) # 10MB
+            if not chunk: break
+            dst.write(chunk)
+            
+    shutil.copystat(caminho_zip, destino)
     return destino
 
 
@@ -317,7 +352,7 @@ def executar_backup(job_id):
             if job.get("destino_local"):
                 _set_progresso(job_id, "copiando_local", 50, "Copiando para destino local...")
                 log(f"[Backup] Copiando para: {job['destino_local']}")
-                copiar_local(caminho_zip, job["destino_local"])
+                copiar_local(caminho_zip, job["destino_local"], job_id)
                 _verificar_timeout(inicio, job_id)  # Verifica timeout após cópia local
                 _set_progresso(job_id, "copiando_local", 100, "Copia local concluida!")
                 log(f"[Backup] Copia local concluida!")
@@ -340,6 +375,9 @@ def executar_backup(job_id):
             tempo_restante = max(60, TIMEOUT_BACKUP_SEGUNDOS - (time.time() - inicio))
 
             def callback_upload(progresso):
+                if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                    raise InterruptedError("Backup abortado pelo usuario.")
+                    
                 pct = int(progresso * 100)
                 _set_progresso(job_id, "enviando_drive", pct,
                               f"Upload: {pct}% ({notificador.formatar_tamanho(int(tamanho_zip * progresso))} / {notificador.formatar_tamanho(tamanho_zip)})")
