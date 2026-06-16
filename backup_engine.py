@@ -30,8 +30,12 @@ _lock = threading.Lock()
 import queue
 _fila_backup = queue.Queue()
 _worker_ativo = False
+_worker_lock = threading.Lock()
 _abort_flags = {}  # job_id -> threading.Event()
 _job_em_execucao = None  # ID do job rodando agora
+
+# Timeout máximo para cada backup (em segundos) - 1 hora
+TIMEOUT_BACKUP_SEGUNDOS = 3600
 
 
 def log(msg):
@@ -70,6 +74,17 @@ def _limpar_progresso(job_id):
         _progresso.pop(job_id, None)
 
 
+def _verificar_timeout(inicio, job_id=None):
+    """Verifica se o backup excedeu o tempo limite. Levanta TimeoutError se sim."""
+    decorrido = time.time() - inicio
+    if decorrido > TIMEOUT_BACKUP_SEGUNDOS:
+        minutos = decorrido / 60
+        raise TimeoutError(
+            f"Backup excedeu o limite de {TIMEOUT_BACKUP_SEGUNDOS // 60} minutos "
+            f"({minutos:.0f} min decorridos). Processo cancelado automaticamente."
+        )
+
+
 def contar_arquivos(caminhos_str):
     """Conta todos os arquivos, suportando múltiplos caminhos separados por pipe (|)"""
     total = 0
@@ -84,7 +99,7 @@ def contar_arquivos(caminhos_str):
     return total
 
 
-def compactar_pasta(origens_str, caminho_zip, job_id=None):
+def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
     """
     Compacta as origens dadas em um arquivo ZIP. 'origens_str' pode conter 
     múltiplos caminhos de arquivos/pastas separados por '|'.
@@ -105,9 +120,11 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None):
 
             # Se for um unico arquivo
             if os.path.isfile(caminho_origem):
-                # Verifica abort
+                # Verifica abort e timeout
                 if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
                     raise InterruptedError("Backup abortado pelo usuario.")
+                if inicio:
+                    _verificar_timeout(inicio, job_id)
                 
                 arcname = os.path.basename(caminho_origem)
                 try:
@@ -125,9 +142,11 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None):
             else:
                 for root, dirs, files in os.walk(caminho_origem):
                     for arquivo in files:
-                        # Verifica abort
+                        # Verifica abort e timeout
                         if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
                             raise InterruptedError("Backup abortado pelo usuario.")
+                        if inicio:
+                            _verificar_timeout(inicio, job_id)
                         
                         caminho_completo = os.path.join(root, arquivo)
                         arcname = os.path.relpath(caminho_completo, caminho_origem)
@@ -285,8 +304,9 @@ def executar_backup(job_id):
         log(f"[Backup] Compactando: {job['pasta_origem']}")
 
         caminho_zip, total_arquivos, tamanho_zip = compactar_pasta(
-            job["pasta_origem"], caminho_zip_temp, job_id
+            job["pasta_origem"], caminho_zip_temp, job_id, inicio
         )
+        _verificar_timeout(inicio, job_id)  # Verifica timeout após compactação
 
         log(f"[Backup] ZIP criado: {caminho_zip} ({tamanho_zip} bytes, {total_arquivos} arquivos)")
 
@@ -298,11 +318,13 @@ def executar_backup(job_id):
                 _set_progresso(job_id, "copiando_local", 50, "Copiando para destino local...")
                 log(f"[Backup] Copiando para: {job['destino_local']}")
                 copiar_local(caminho_zip, job["destino_local"])
+                _verificar_timeout(inicio, job_id)  # Verifica timeout após cópia local
                 _set_progresso(job_id, "copiando_local", 100, "Copia local concluida!")
                 log(f"[Backup] Copia local concluida!")
 
         # ===== ETAPA 3: Upload Google Drive =====
         if job["destino_tipo"] in ("drive", "ambos"):
+            _verificar_timeout(inicio, job_id)  # Verifica timeout antes do upload
             json_path = config.get("google_json_path", "")
             drive_id = job.get("destino_drive_id")
 
@@ -314,12 +336,15 @@ def executar_backup(job_id):
             _set_progresso(job_id, "enviando_drive", 0, "Iniciando upload para Google Drive...")
             log(f"[Backup] Fazendo upload para Drive (pasta: {drive_id})")
 
+            # Calcula tempo restante para o upload (desconta o que já gastou)
+            tempo_restante = max(60, TIMEOUT_BACKUP_SEGUNDOS - (time.time() - inicio))
+
             def callback_upload(progresso):
                 pct = int(progresso * 100)
                 _set_progresso(job_id, "enviando_drive", pct,
                               f"Upload: {pct}% ({notificador.formatar_tamanho(int(tamanho_zip * progresso))} / {notificador.formatar_tamanho(tamanho_zip)})")
 
-            drive_client.upload_arquivo(json_path, caminho_zip, drive_id, callback_upload)
+            drive_client.upload_arquivo(json_path, caminho_zip, drive_id, callback_upload, timeout_segundos=int(tempo_restante))
             log(f"[Backup] Upload concluido!")
 
         # ===== ETAPA 4: Finalizar =====
@@ -346,6 +371,21 @@ def executar_backup(job_id):
             limpar_backups_antigos(job, config)
         except Exception as re:
             log(f"[Backup] Erro na retencao: {re}")
+
+    except TimeoutError as te:
+        duracao = time.time() - inicio
+        erro_msg = str(te)
+        duracao_min = duracao / 60
+        
+        _set_progresso(job_id, "timeout", 0, f"TIMEOUT: {erro_msg}")
+        models.registrar_fim(exec_id, "timeout", 0, 0, job["destino_tipo"], f"TIMEOUT: {erro_msg}")
+        log(f"[Backup] TIMEOUT - Job '{job['nome']}': {erro_msg} (durou {duracao_min:.0f} min)")
+
+        # Notifica timeout no WhatsApp
+        try:
+            notificador.notificar_timeout(config, job["nome"], duracao_min)
+        except Exception as ne:
+            log(f"[Backup] Erro ao notificar WhatsApp (timeout): {ne}")
 
     except Exception as e:
         duracao = time.time() - inicio
@@ -406,8 +446,8 @@ def _worker_fila():
         log(f"[Fila] Iniciando backup do job {job_id} (restam {_fila_backup.qsize()} na fila)")
         executar_backup(job_id)
         _fila_backup.task_done()
-    
-    _worker_ativo = False
+    with _worker_lock:
+        _worker_ativo = False
     _job_em_execucao = None
     log("[Fila] Todos os backups da fila foram concluidos.")
 
@@ -419,9 +459,11 @@ def executar_backup_async(job_id):
     _fila_backup.put(job_id)
     log(f"[Fila] Job {job_id} adicionado a fila (posicao: {_fila_backup.qsize()})")
     
-    if not _worker_ativo:
-        t = threading.Thread(target=_worker_fila, daemon=True)
-        t.start()
+    with _worker_lock:
+        if not _worker_ativo:
+            _worker_ativo = True
+            t = threading.Thread(target=_worker_fila, daemon=True)
+            t.start()
     
     return None
 

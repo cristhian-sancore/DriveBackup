@@ -118,3 +118,19 @@ def notificar_auth_necessaria(config):
     )
     return enviar_whatsapp(config, msg)
 
+
+def notificar_timeout(config, job_nome, duracao_min):
+    """Envia notificação de que o backup excedeu o limite de tempo (timeout)."""
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    msg = (
+        f"⏰ *BACKUP TIMEOUT* ⚠️\n\n"
+        f"*Job:* {job_nome}\n"
+        f"*Tempo decorrido:* {duracao_min:.0f} minutos\n"
+        f"*Limite:* 60 minutos\n\n"
+        f"O backup foi *cancelado automaticamente* porque excedeu o limite de 1 hora.\n"
+        f"Isso pode indicar problemas de rede, disco lento ou arquivo muito grande.\n\n"
+        f"_Verifique o painel e os logs para mais detalhes._\n"
+        f"*Data:* {agora}"
+    )
+    return enviar_whatsapp(config, msg)
+

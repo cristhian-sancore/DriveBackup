@@ -134,6 +134,8 @@
                                 <i class="fas fa-times-circle text-danger"></i>
                             {% elif exec.status == 'abortado' %}
                                 <i class="fas fa-ban text-warning"></i>
+                            {% elif exec.status == 'timeout' %}
+                                <i class="fas fa-clock text-warning" style="color: #f97316;"></i>
                             {% else %}
                                 <i class="fas fa-sync fa-spin text-info" id="exec-icon-{{ exec.job_id }}"></i>
                             {% endif %}
@@ -168,6 +170,8 @@
                                 <span class="badge badge-red">Falhou</span>
                             {% elif exec.status == 'abortado' %}
                                 <span class="badge badge-yellow" style="background: #f59e0b; color: #000;">Abortado</span>
+                            {% elif exec.status == 'timeout' %}
+                                <span class="badge badge-yellow" style="background: #f97316; color: #fff;">Timeout</span>
                             {% elif exec.status == 'em_andamento' %}
                                 <span class="badge badge-blue" id="dash-badge-{{ exec.job_id }}">Executando</span>
                             {% endif %}
@@ -217,11 +221,11 @@
                         if (badge) badge.textContent = 'Concluído!';
                         // Recarrega a página após 3s para atualizar o status
                         setTimeout(() => window.location.reload(), 3000);
-                    } else if (data.etapa === 'erro' || data.etapa === 'abortado') {
-                        bar.style.background = '#ef4444';
+                    } else if (data.etapa === 'erro' || data.etapa === 'abortado' || data.etapa === 'timeout') {
+                        bar.style.background = data.etapa === 'timeout' ? '#f97316' : '#ef4444';
                         if (badge) {
-                            badge.textContent = data.etapa === 'abortado' ? 'Abortado' : 'Erro';
-                            badge.className = 'badge badge-red';
+                            badge.textContent = data.etapa === 'abortado' ? 'Abortado' : (data.etapa === 'timeout' ? 'Timeout' : 'Erro');
+                            badge.className = data.etapa === 'timeout' ? 'badge badge-yellow' : 'badge badge-red';
                         }
                         setTimeout(() => window.location.reload(), 3000);
                     }

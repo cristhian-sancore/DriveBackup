@@ -280,9 +280,10 @@ def criar_pasta(json_path, nome, parent_id=None):
         raise Exception(f"Erro ao criar pasta: {e}")
 
 
-def upload_arquivo(json_path, caminho_local, parent_id, callback=None):
+def upload_arquivo(json_path, caminho_local, parent_id, callback=None, timeout_segundos=3600):
     """
     Faz upload de um arquivo para o Google Drive com progresso.
+    timeout_segundos: Limite de tempo total para o upload (padrão: 3600s = 1 hora).
     """
     service = get_service(json_path)
     
@@ -318,18 +319,35 @@ def upload_arquivo(json_path, caminho_local, parent_id, callback=None):
         response = None
         retry_count = 0
         max_retries = 5
+        import time
+        upload_inicio = time.time()
         
         while response is None:
+            # Verifica timeout global do upload
+            tempo_decorrido = time.time() - upload_inicio
+            if tempo_decorrido > timeout_segundos:
+                raise TimeoutError(
+                    f"Upload excedeu o limite de {timeout_segundos // 60} minutos "
+                    f"({tempo_decorrido / 60:.0f} min decorridos). "
+                    f"Arquivo: {nome_arquivo} ({tamanho / 1024 / 1024:.1f} MB)"
+                )
+            
             try:
                 status, response = request.next_chunk()
                 if status and callback:
                     callback(status.progress())
                 retry_count = 0 # Reseta retries ao ter sucesso em um chunk
+            except (ConnectionError, OSError, IOError) as e:
+                # Erros de rede/conexão - retry com backoff
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise Exception(f"Erro de conexao no upload apos {max_retries} tentativas: {e}")
+                time.sleep(2 * retry_count)
+                continue
             except Exception as e:
                 # Captura erro de SSL/EOF ou timeout
                 if ("EOF" in str(e) or "violation of protocol" in str(e) or "timeout" in str(e).lower()) and retry_count < max_retries:
                     retry_count += 1
-                    import time
                     time.sleep(2 * retry_count) # Backoff exponencial simples
                     continue
                 raise Exception(f"Erro no upload após {retry_count} tentativas: {e}")

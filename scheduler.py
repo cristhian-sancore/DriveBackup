@@ -73,7 +73,7 @@ def agendar_job(job):
     )
 
     scheduler.add_job(
-        backup_engine.executar_backup,
+        backup_engine.executar_backup_async,
         trigger=trigger,
         args=[job["id"]],
         id=job_tag,

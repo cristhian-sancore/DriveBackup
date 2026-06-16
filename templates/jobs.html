@@ -95,6 +95,10 @@
                             <span class="text-success">✅ {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
                         {% elif job.ultima.status == 'erro' %}
                             <span class="text-danger">❌ {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
+                        {% elif job.ultima.status == 'timeout' %}
+                            <span class="text-danger">⏰ Timeout - {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
+                        {% elif job.ultima.status == 'abortado' %}
+                            <span style="color: #f59e0b;">⛔ Abortado - {{ job.ultima.inicio[:16].replace('T', ' ') }}</span>
                         {% else %}
                             <span class="text-info">⏳ Em andamento</span>
                         {% endif %}
@@ -197,10 +201,10 @@
                         bar.style.width = '100%';
                         bar.style.background = '#22c55e';
                         pct.textContent = '100%';
-                    } else if (data.etapa === 'erro' || data.etapa === 'abortado') {
+                    } else if (data.etapa === 'erro' || data.etapa === 'abortado' || data.etapa === 'timeout') {
                         btnExec.style.display = '';
                         btnAbort.style.display = 'none';
-                        bar.style.background = '#ef4444';
+                        bar.style.background = data.etapa === 'timeout' ? '#f97316' : '#ef4444';
                     }
                 })
                 .catch(() => {});
