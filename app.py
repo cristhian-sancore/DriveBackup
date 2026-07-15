@@ -7,6 +7,8 @@ import sys
 import json
 import time
 import threading
+import atexit
+import signal
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, session
 
@@ -54,6 +56,23 @@ def _obter_secret_key():
         return str(uuid.uuid4())  # Fallback se o banco ainda não existir
 
 models.init_db()
+
+def _on_shutdown(*args):
+    try:
+        app_logger.info("[SISTEMA] Encerrando serviço. Abortando backups em andamento...")
+        backup_engine.abortar_todos_os_backups()
+    except:
+        pass
+
+atexit.register(_on_shutdown)
+try:
+    signal.signal(signal.SIGTERM, _on_shutdown)
+    signal.signal(signal.SIGINT, _on_shutdown)
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, _on_shutdown)
+except:
+    pass
+
 app.secret_key = _obter_secret_key()
 
 # Suporte a reverse proxy (Cloudflare Tunnel, Nginx, etc.)

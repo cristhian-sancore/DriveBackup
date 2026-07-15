@@ -96,6 +96,17 @@ def init_db():
         except:
             pass
     
+    # Limpeza ao reiniciar serviço: marca qualquer execução 'em_andamento' do boot anterior como 'abortado'
+    try:
+        cursor.execute("""
+            UPDATE execucoes 
+            SET status='abortado', fim=?, mensagem='Backup abortado pelo reinicio ou parada do servico.'
+            WHERE status='em_andamento'
+        """, (datetime.now().isoformat(),))
+        conn.commit()
+    except Exception as e:
+        pass
+
     conn.close()
 
 

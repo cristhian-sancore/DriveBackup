@@ -512,6 +512,32 @@ def abortar_backup(job_id):
     return False
 
 
+def abortar_todos_os_backups():
+    """Aborta todos os backups em andamento ou na fila durante parada ou reinício do serviço."""
+    while not _fila_backup.empty():
+        try:
+            _fila_backup.get_nowait()
+            _fila_backup.task_done()
+        except:
+            break
+            
+    for job_id, event in list(_abort_flags.items()):
+        event.set()
+        log(f"[Shutdown] Sinal de abort enviado forçadamente para o job {job_id}")
+        
+    try:
+        conn = models.get_db()
+        conn.execute("""
+            UPDATE execucoes 
+            SET status='abortado', fim=?, mensagem='Backup abortado pelo reinicio ou parada do servico.'
+            WHERE status='em_andamento'
+        """, (datetime.now().isoformat(),))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log(f"[Shutdown] Erro ao atualizar status no banco: {e}")
+
+
 def obter_job_em_execucao():
     """Retorna o ID do job que está rodando no momento."""
     return _job_em_execucao
