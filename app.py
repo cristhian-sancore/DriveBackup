@@ -622,7 +622,7 @@ def auth_google():
     try:
         flow = Flow.from_client_secrets_file(
             json_path,
-            scopes=['https://www.googleapis.com/auth/drive'],
+            scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid'],
             redirect_uri=url_for('oauth2callback', _external=True)
         )
         
@@ -657,29 +657,43 @@ def oauth2callback():
             data_dir = models.DATA_DIR
             for arq in sorted(os.listdir(data_dir)):
                 if arq.endswith(".json"):
-                    caminho = os.path.join(data_dir, arq)
-                    try:
-                        with open(caminho, 'r') as f:
-                            dados = json.load(f)
-                            if "web" in dados or "installed" in dados:
-                                json_path = caminho
-                                break
-                    except: continue
+                     caminho = os.path.join(data_dir, arq)
+                     try:
+                         with open(caminho, 'r') as f:
+                             dados = json.load(f)
+                             if "web" in dados or "installed" in dados:
+                                 json_path = caminho
+                                 break
+                     except: continue
         
         if not json_path:
             raise Exception("Arquivo client_secret não encontrado no callback.")
 
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
         flow = Flow.from_client_secrets_file(
             json_path,
-            scopes=['https://www.googleapis.com/auth/drive'],
+            scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid'],
             state=state,
             redirect_uri=url_for('oauth2callback', _external=True)
         )
         
-        flow.fetch_token(
-            authorization_response=request.url,
-            code_verifier=session.get('oauth_verifier')
-        )
+        try:
+            flow.fetch_token(
+                authorization_response=request.url,
+                code_verifier=session.get('oauth_verifier')
+            )
+        except Warning as w:
+            if "Scope has changed" in str(w):
+                app_logger.info(f"[DRIVE] Aviso de mudança de escopo absorvido: {w}")
+            else:
+                raise
+        except Exception as ex:
+            if "Scope has changed" in str(ex):
+                app_logger.info(f"[DRIVE] Exceção de mudança de escopo absorvida: {ex}")
+            else:
+                raise
         
         creds = flow.credentials
         
