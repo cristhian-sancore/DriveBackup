@@ -95,12 +95,54 @@ def remover_job(job_id):
         print(f"[Scheduler] Job {job_id} removido do agendamento.")
 
 
+def verificar_timeouts_jobs(tempo_limite_horas=12):
+    """Verifica execuções em andamento que ultrapassaram o limite (padrão 12 horas) e as aborta automaticamente."""
+    try:
+        from datetime import datetime
+        conn = models.get_db()
+        cursor = conn.cursor()
+        rows = cursor.execute("SELECT id, job_id, inicio FROM execucoes WHERE status='em_andamento'").fetchall()
+        agora = datetime.now()
+        for r in rows:
+            try:
+                inicio_dt = datetime.fromisoformat(r['inicio'])
+                segundos = (agora - inicio_dt).total_seconds()
+                if segundos > tempo_limite_horas * 3600:
+                    print(f"[Timeout Watchdog] Execucao {r['id']} (Job {r['job_id']}) excedeu {tempo_limite_horas}h. Abortando...")
+                    backup_engine.abortar_backup(r['job_id'])
+                    cursor.execute("""
+                        UPDATE execucoes 
+                        SET status='timeout', fim=?, mensagem=?
+                        WHERE id=?
+                    """, (agora.isoformat(), f"Backup cancelado e abortado automaticamente após exceder o tempo limite de {tempo_limite_horas} horas.", r['id']))
+            except Exception as e:
+                print(f"[Timeout Watchdog] Erro ao checar tempo da execucao {r['id']}: {e}")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Timeout Watchdog] Erro na rotina de verificação: {e}")
+
+
 def carregar_todos_jobs():
-    """Carrega e agenda todos os jobs do banco."""
+    """Carrega e agenda todos os jobs do banco e inicia rotina de checagem de timeout."""
     jobs = models.listar_jobs()
     for job in jobs:
         agendar_job(job)
     print(f"[Scheduler] {len(jobs)} jobs carregados.")
+    
+    try:
+        scheduler = get_scheduler()
+        scheduler.add_job(
+            verificar_timeouts_jobs,
+            'interval',
+            minutes=10,
+            id='watchdog_timeouts_12h',
+            replace_existing=True,
+            name='Watchdog: Verificacao de Timeouts (12h)'
+        )
+        verificar_timeouts_jobs()
+    except Exception as e:
+        print(f"[Scheduler] Erro ao iniciar watchdog de timeouts: {e}")
 
 
 def listar_proximas_execucoes():

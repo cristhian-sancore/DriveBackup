@@ -34,8 +34,8 @@ _worker_lock = threading.Lock()
 _abort_flags = {}  # job_id -> threading.Event()
 _job_em_execucao = None  # ID do job rodando agora
 
-# Timeout máximo para cada backup (em segundos) - 1 hora
-TIMEOUT_BACKUP_SEGUNDOS = 3600
+# Timeout máximo para cada backup (em segundos) - 12 horas
+TIMEOUT_BACKUP_SEGUNDOS = 43200
 
 
 from logger import app_logger
