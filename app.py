@@ -19,6 +19,7 @@ from google_auth_oauthlib.flow import Flow
 from datetime import datetime
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 def get_resource_path(relative_path):
     if getattr(sys, 'frozen', False):
