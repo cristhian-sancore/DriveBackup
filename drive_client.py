@@ -3,6 +3,9 @@ drive_client.py - Wrapper do Google Drive API v3
 Suporta OAuth2 (conta pessoal) e Service Account (Google Workspace)
 """
 import os
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
 from logger import app_logger
 import json
 from google.oauth2.credentials import Credentials
@@ -12,9 +15,6 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
-
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid']
 import sys

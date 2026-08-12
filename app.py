@@ -2,6 +2,9 @@
 app.py - Servidor Flask do DriveBackup
 """
 import os
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
 from logger import app_logger
 import sys
 import json
@@ -11,6 +14,7 @@ import atexit
 import signal
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import models
 import drive_client
@@ -19,9 +23,6 @@ import scheduler
 import notificador
 from google_auth_oauthlib.flow import Flow
 from datetime import datetime
-
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 def get_resource_path(relative_path):
     if getattr(sys, 'frozen', False):
@@ -36,6 +37,9 @@ if getattr(sys, 'frozen', False):
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 else:
     app = Flask(__name__)
+
+# Suporte a proxies reversos (ex: Cloudflare Tunnel, Nginx, HTTPS)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Secret key dinâmica: gerada no primeiro boot e salva no banco
 import uuid
@@ -639,10 +643,14 @@ def auth_google():
         return redirect(url_for("settings_view"))
 
     try:
+        redirect_uri = url_for('oauth2callback', _external=True)
+        if request.headers.get('X-Forwarded-Proto') == 'https' and redirect_uri.startswith('http://'):
+            redirect_uri = redirect_uri.replace('http://', 'https://', 1)
+
         flow = Flow.from_client_secrets_file(
             json_path,
             scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid'],
-            redirect_uri=url_for('oauth2callback', _external=True)
+            redirect_uri=redirect_uri
         )
         
         authorization_url, state = flow.authorization_url(
@@ -688,29 +696,34 @@ def oauth2callback():
         if not json_path:
             raise Exception("Arquivo client_secret não encontrado no callback.")
 
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-        os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+        redirect_uri = url_for('oauth2callback', _external=True)
+        if request.headers.get('X-Forwarded-Proto') == 'https' and redirect_uri.startswith('http://'):
+            redirect_uri = redirect_uri.replace('http://', 'https://', 1)
+
+        auth_url = request.url
+        if request.headers.get('X-Forwarded-Proto') == 'https' and auth_url.startswith('http://'):
+            auth_url = auth_url.replace('http://', 'https://', 1)
 
         flow = Flow.from_client_secrets_file(
             json_path,
             scopes=['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid'],
             state=state,
-            redirect_uri=url_for('oauth2callback', _external=True)
+            redirect_uri=redirect_uri
         )
         
         try:
+            flow.oauth2session.scope = None
+        except Exception:
+            pass
+
+        try:
             flow.fetch_token(
-                authorization_response=request.url,
+                authorization_response=auth_url,
                 code_verifier=session.get('oauth_verifier')
             )
-        except Warning as w:
-            if "Scope has changed" in str(w):
-                app_logger.info(f"[DRIVE] Aviso de mudança de escopo absorvido: {w}")
-            else:
-                raise
         except Exception as ex:
-            if "Scope has changed" in str(ex):
-                app_logger.info(f"[DRIVE] Exceção de mudança de escopo absorvida: {ex}")
+            if "Scope has changed" in str(ex) or "Warning" in type(ex).__name__:
+                app_logger.info(f"[DRIVE] Exceção de escopo absorvida: {ex}")
             else:
                 raise
         
