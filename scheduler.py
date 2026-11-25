@@ -36,15 +36,21 @@ def _job_id_str(job_id):
     return f"backup_job_{job_id}"
 
 
+def _remover_todos_subjobs(scheduler, job_id):
+    """Remove o job principal e eventuais horários extras do scheduler."""
+    prefix = _job_id_str(job_id)
+    for j in list(scheduler.get_jobs()):
+        if j.id == prefix or j.id.startswith(f"{prefix}_"):
+            scheduler.remove_job(j.id)
+
+
 def agendar_job(job):
-    """Agenda ou re-agenda um job de backup."""
+    """Agenda ou re-agenda um job de backup (suporta múltiplos horários)."""
     scheduler = get_scheduler()
     job_tag = _job_id_str(job["id"])
 
-    # Remove agendamento anterior se existir
-    existing = scheduler.get_job(job_tag)
-    if existing:
-        scheduler.remove_job(job_tag)
+    # Remove agendamentos anteriores se existirem
+    _remover_todos_subjobs(scheduler, job["id"])
 
     if not job.get("ativo"):
         app_logger.info(f"[Scheduler] Job '{job['nome']}' esta inativo, nao agendado.")
@@ -62,39 +68,54 @@ def agendar_job(job):
         app_logger.info(f"[Scheduler] Job '{job['nome']}' dias inválidos: {dias_semana}")
         return
 
-    # Parse horário
-    horario = job.get("horario", "22:00")
-    partes = horario.split(":")
-    hora = int(partes[0]) if len(partes) > 0 else 22
-    minuto = int(partes[1]) if len(partes) > 1 else 0
+    # Coleta horário principal + horários extras
+    horarios_raw = [job.get("horario", "22:00")]
+    extras = (job.get("horarios_extras") or "").strip()
+    if extras:
+        for h in extras.replace(";", ",").split(","):
+            h = h.strip()
+            if h and h not in horarios_raw:
+                horarios_raw.append(h)
 
-    trigger = CronTrigger(
-        day_of_week=dias_cron,
-        hour=hora,
-        minute=minuto
-    )
+    agendados = []
+    for idx, horario in enumerate(horarios_raw):
+        try:
+            partes = horario.split(":")
+            hora = int(partes[0])
+            minuto = int(partes[1]) if len(partes) > 1 else 0
+            if not (0 <= hora <= 23 and 0 <= minuto <= 59):
+                continue
+        except (ValueError, IndexError):
+            app_logger.warning(f"[Scheduler] Horario invalido ignorado em '{job['nome']}': {horario}")
+            continue
 
-    scheduler.add_job(
-        backup_engine.executar_backup_async,
-        trigger=trigger,
-        args=[job["id"]],
-        id=job_tag,
-        name=f"Backup: {job['nome']}",
-        replace_existing=True,
-        misfire_grace_time=3600  # 1 hora de tolerância
-    )
+        sub_id = job_tag if idx == 0 else f"{job_tag}_{idx}"
+        trigger = CronTrigger(
+            day_of_week=dias_cron,
+            hour=hora,
+            minute=minuto
+        )
 
-    app_logger.info(f"[Scheduler] Job '{job['nome']}' agendado: {dias_cron} às {hora:02d}:{minuto:02d}")
+        scheduler.add_job(
+            backup_engine.executar_backup_async,
+            trigger=trigger,
+            args=[job["id"]],
+            id=sub_id,
+            name=f"Backup: {job['nome']} ({hora:02d}:{minuto:02d})",
+            replace_existing=True,
+            misfire_grace_time=3600  # 1 hora de tolerância
+        )
+        agendados.append(f"{hora:02d}:{minuto:02d}")
+
+    if agendados:
+        app_logger.info(f"[Scheduler] Job '{job['nome']}' agendado: {dias_cron} às {', '.join(agendados)}")
 
 
 def remover_job(job_id):
-    """Remove agendamento de um job."""
+    """Remove todos os agendamentos de um job."""
     scheduler = get_scheduler()
-    job_tag = _job_id_str(job_id)
-    existing = scheduler.get_job(job_tag)
-    if existing:
-        scheduler.remove_job(job_tag)
-        app_logger.info(f"[Scheduler] Job {job_id} removido do agendamento.")
+    _remover_todos_subjobs(scheduler, job_id)
+    app_logger.info(f"[Scheduler] Job {job_id} removido do agendamento.")
 
 
 def verificar_timeouts_jobs(tempo_limite_horas=12):
@@ -151,18 +172,27 @@ def carregar_todos_jobs():
 
 
 def listar_proximas_execucoes():
-    """Lista as próximas execuções agendadas."""
+    """Lista a próxima execução mais próxima de cada job agendado."""
     scheduler = get_scheduler()
-    proximas = []
+    melhores = {}
     for job in scheduler.get_jobs():
+        if not job.id.startswith("backup_job_"):
+            continue
         proxima = job.next_run_time
-        if proxima:
-            proximas.append({
-                "job_id": job.id.replace("backup_job_", ""),
+        if not proxima:
+            continue
+        base_id = job.id.replace("backup_job_", "").split("_")[0]
+        if base_id not in melhores or proxima < melhores[base_id]["dt"]:
+            melhores[base_id] = {
+                "dt": proxima,
+                "job_id": base_id,
                 "nome": job.name,
-                "proxima_execucao": proxima.strftime("%d/%m/%Y %H:%M")
-            })
-    return proximas
+                "proxima_execucao": proxima.strftime("%d/%m/%Y %H:%M"),
+            }
+    return [
+        {"job_id": v["job_id"], "nome": v["nome"], "proxima_execucao": v["proxima_execucao"]}
+        for v in melhores.values()
+    ]
 
 
 def parar():

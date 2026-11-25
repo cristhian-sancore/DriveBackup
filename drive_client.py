@@ -11,7 +11,7 @@ from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
 SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/userinfo.email', 'openid']
@@ -138,6 +138,23 @@ def get_service(json_path=None):
     if _service is None:
         raise Exception("Google Drive nao autenticado. Configure as credenciais.")
     return _service
+
+
+def obter_info_cota(json_path):
+    """Retorna informações da conta e cota de armazenamento do Google Drive."""
+    service = get_service(json_path)
+    about = service.about().get(fields="user, storageQuota").execute()
+    email = about.get("user", {}).get("emailAddress", "Desconhecido")
+    quota = about.get("storageQuota", {})
+    usado = int(quota.get("usage", 0))
+    limite = int(quota.get("limit", 0)) if quota.get("limit") else 0
+    livre = max(0, limite - usado) if limite > 0 else None
+    return {
+        "email": email,
+        "usado_bytes": usado,
+        "limite_bytes": limite,
+        "livre_bytes": livre,
+    }
 
 
 def testar_conexao(json_path, flow_web=False):
@@ -377,12 +394,13 @@ def deletar_arquivo(json_path, file_id):
 
 
 def listar_arquivos_pasta(json_path, folder_id):
-    """Lista todos os arquivos dentro de uma pasta do Drive."""
+    """Lista todos os arquivos dentro de uma pasta do Drive (mais recentes primeiro)."""
     service = get_service(json_path)
     try:
         results = service.files().list(
             q=f"'{folder_id}' in parents and trashed=false",
-            fields="files(id, name, createdTime, size)",
+            fields="files(id, name, createdTime, size, mimeType)",
+            orderBy="createdTime desc",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
             pageSize=200
@@ -390,6 +408,33 @@ def listar_arquivos_pasta(json_path, folder_id):
         return results.get("files", [])
     except HttpError as e:
         raise Exception(f"Erro ao listar arquivos: {e}")
+
+
+def baixar_arquivo(json_path, file_id):
+    """Obtém metadados e generator de chunks para download direto de um arquivo do Drive."""
+    service = get_service(json_path)
+    meta = service.files().get(
+        fileId=file_id,
+        fields="id, name, size, mimeType",
+        supportsAllDrives=True
+    ).execute()
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+
+    import io
+    def stream_chunks():
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request, chunksize=5 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+            buffer.seek(0)
+            data = buffer.read()
+            if data:
+                yield data
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return meta, stream_chunks()
 
 
 def excluir_arquivo(json_path, file_id):

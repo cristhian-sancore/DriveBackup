@@ -5,10 +5,33 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">
-        <h2><i class="fas fa-clock-rotate-left"></i> Todas as Execuções</h2>
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <h2><i class="fas fa-clock-rotate-left"></i> Todas as Execuções ({{ total }})</h2>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="abrirLogSistema()">
+            <i class="fas fa-file-alt"></i> Ver Log do Sistema (DriveBackup.log)
+        </button>
     </div>
     <div class="card-body">
+        <form method="GET" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; align-items:center;">
+            <select name="job_id" class="form-control" style="max-width:240px;">
+                <option value="">Todos os Jobs</option>
+                {% for j in jobs %}
+                <option value="{{ j.id }}" {% if filtro_job_id == j.id %}selected{% endif %}>{{ j.nome }}</option>
+                {% endfor %}
+            </select>
+            <select name="status" class="form-control" style="max-width:180px;">
+                <option value="">Todos os Status</option>
+                <option value="sucesso" {% if filtro_status == 'sucesso' %}selected{% endif %}>Sucesso</option>
+                <option value="erro" {% if filtro_status == 'erro' %}selected{% endif %}>Erro</option>
+                <option value="timeout" {% if filtro_status == 'timeout' %}selected{% endif %}>Timeout</option>
+                <option value="abortado" {% if filtro_status == 'abortado' %}selected{% endif %}>Abortado</option>
+                <option value="em_andamento" {% if filtro_status == 'em_andamento' %}selected{% endif %}>Em andamento</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-filter"></i> Filtrar</button>
+            {% if filtro_job_id or filtro_status %}
+            <a href="{{ url_for('logs_view') }}" class="btn btn-sm btn-ghost">Limpar</a>
+            {% endif %}
+        </form>
         {% if execucoes %}
         <div class="table-responsive">
             <table class="table">
@@ -74,6 +97,17 @@
                 </tbody>
             </table>
         </div>
+        {% if total_pages > 1 %}
+        <div style="display:flex; justify-content:center; gap:8px; margin-top:16px; align-items:center;">
+            {% if page > 1 %}
+            <a class="btn btn-sm btn-ghost" href="{{ url_for('logs_view', page=page-1, job_id=filtro_job_id, status=filtro_status) }}">Anterior</a>
+            {% endif %}
+            <span class="text-muted">Página {{ page }} de {{ total_pages }}</span>
+            {% if page < total_pages %}
+            <a class="btn btn-sm btn-ghost" href="{{ url_for('logs_view', page=page+1, job_id=filtro_job_id, status=filtro_status) }}">Próxima</a>
+            {% endif %}
+        </div>
+        {% endif %}
         {% else %}
         <div class="empty-state">
             <i class="fas fa-clock"></i>
@@ -83,4 +117,44 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Modal Log do Sistema -->
+<div class="modal-overlay" id="log-modal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal modal-lg" onclick="event.stopPropagation()" style="max-width:900px; width:95%;">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <h3><i class="fas fa-file-alt"></i> DriveBackup.log (últimas 300 linhas)</h3>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-sm btn-primary" onclick="carregarLogSistema()">Atualizar</button>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('log-modal').style.display='none'">Fechar</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <pre id="log-sistema-conteudo" style="background:#0f172a; color:#e2e8f0; padding:12px; border-radius:6px; max-height:65vh; overflow:auto; font-size:0.8rem; white-space:pre-wrap;"></pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function abrirLogSistema() {
+    document.getElementById('log-modal').style.display = 'flex';
+    carregarLogSistema();
+}
+function carregarLogSistema() {
+    const pre = document.getElementById('log-sistema-conteudo');
+    pre.textContent = 'Carregando logs...';
+    fetch('/api/sistema/logs?linhas=300')
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                pre.textContent = (data.linhas || []).join('\n') || '(Log vazio)';
+                pre.scrollTop = pre.scrollHeight;
+            } else {
+                pre.textContent = 'Erro: ' + (data.erro || 'desconhecido');
+            }
+        })
+        .catch(e => { pre.textContent = 'Erro ao buscar log: ' + e; });
+}
+</script>
 {% endblock %}

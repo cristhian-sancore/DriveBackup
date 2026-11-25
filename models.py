@@ -44,8 +44,13 @@ def init_db():
             destino_local TEXT,
             dias_semana TEXT NOT NULL DEFAULT '[]',
             horario TEXT NOT NULL DEFAULT '22:00',
+            horarios_extras TEXT DEFAULT '',
+            exclusoes TEXT DEFAULT '',
+            pre_comando TEXT DEFAULT '',
+            zip_senha TEXT DEFAULT '',
             ativo INTEGER NOT NULL DEFAULT 1,
             retencao INTEGER NOT NULL DEFAULT 0,
+            retencao_dias INTEGER NOT NULL DEFAULT 0,
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -86,15 +91,24 @@ def init_db():
 
     conn.commit()
     
-    # Migração: adiciona coluna retencao se não existir (para bancos antigos)
-    try:
-        cursor.execute("SELECT retencao FROM jobs LIMIT 1")
-    except:
+    # Migração: adiciona colunas novas se não existirem (para bancos antigos)
+    novas_colunas = [
+        ("retencao", "INTEGER NOT NULL DEFAULT 0"),
+        ("retencao_dias", "INTEGER NOT NULL DEFAULT 0"),
+        ("horarios_extras", "TEXT DEFAULT ''"),
+        ("exclusoes", "TEXT DEFAULT ''"),
+        ("pre_comando", "TEXT DEFAULT ''"),
+        ("zip_senha", "TEXT DEFAULT ''"),
+    ]
+    for col_nome, col_def in novas_colunas:
         try:
-            cursor.execute("ALTER TABLE jobs ADD COLUMN retencao INTEGER NOT NULL DEFAULT 0")
-            conn.commit()
-        except:
-            pass
+            cursor.execute(f"SELECT {col_nome} FROM jobs LIMIT 1")
+        except Exception:
+            try:
+                cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_nome} {col_def}")
+                conn.commit()
+            except Exception:
+                pass
     
     # Limpeza ao reiniciar serviço: marca qualquer execução 'em_andamento' do boot anterior como 'abortado'
     try:
@@ -119,8 +133,10 @@ def criar_job(dados):
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO jobs (nome, pasta_origem, destino_tipo, destino_drive_id,
-                         destino_drive_nome, destino_local, dias_semana, horario, ativo, retencao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                         destino_drive_nome, destino_local, dias_semana, horario,
+                         horarios_extras, exclusoes, pre_comando, zip_senha,
+                         ativo, retencao, retencao_dias)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     """, (
         dados["nome"],
         dados["pasta_origem"],
@@ -130,7 +146,12 @@ def criar_job(dados):
         dados.get("destino_local"),
         json.dumps(dados.get("dias_semana", [])),
         dados.get("horario", "22:00"),
-        dados.get("retencao", 0)
+        dados.get("horarios_extras", ""),
+        dados.get("exclusoes", ""),
+        dados.get("pre_comando", ""),
+        dados.get("zip_senha", ""),
+        dados.get("retencao", 0),
+        dados.get("retencao_dias", 0),
     ))
     conn.commit()
     job_id = cursor.lastrowid
@@ -142,7 +163,9 @@ def atualizar_job(job_id, dados):
     conn = get_db()
     conn.execute("""
         UPDATE jobs SET nome=?, pasta_origem=?, destino_tipo=?, destino_drive_id=?,
-                       destino_drive_nome=?, destino_local=?, dias_semana=?, horario=?, retencao=?
+                       destino_drive_nome=?, destino_local=?, dias_semana=?, horario=?,
+                       horarios_extras=?, exclusoes=?, pre_comando=?, zip_senha=?,
+                       retencao=?, retencao_dias=?
         WHERE id=?
     """, (
         dados["nome"],
@@ -153,7 +176,12 @@ def atualizar_job(job_id, dados):
         dados.get("destino_local"),
         json.dumps(dados.get("dias_semana", [])),
         dados.get("horario", "22:00"),
+        dados.get("horarios_extras", ""),
+        dados.get("exclusoes", ""),
+        dados.get("pre_comando", ""),
+        dados.get("zip_senha", ""),
         dados.get("retencao", 0),
+        dados.get("retencao_dias", 0),
         job_id
     ))
     conn.commit()
@@ -221,23 +249,42 @@ def registrar_fim(exec_id, status, tamanho_zip=0, arquivos_total=0, destino_usad
     conn.close()
 
 
-def listar_execucoes(limit=50, job_id=None):
+def listar_execucoes(limit=50, job_id=None, status=None, offset=0):
     conn = get_db()
+    filtros = []
+    params = []
     if job_id:
-        rows = conn.execute("""
-            SELECT e.*, j.nome as job_nome FROM execucoes e
-            JOIN jobs j ON e.job_id = j.id
-            WHERE e.job_id=?
-            ORDER BY e.inicio DESC LIMIT ?
-        """, (job_id, limit)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT e.*, j.nome as job_nome FROM execucoes e
-            JOIN jobs j ON e.job_id = j.id
-            ORDER BY e.inicio DESC LIMIT ?
-        """, (limit,)).fetchall()
+        filtros.append("e.job_id=?")
+        params.append(job_id)
+    if status:
+        filtros.append("e.status=?")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    params.extend([limit, offset])
+    rows = conn.execute(f"""
+        SELECT e.*, j.nome as job_nome FROM execucoes e
+        JOIN jobs j ON e.job_id = j.id
+        {where_sql}
+        ORDER BY e.inicio DESC LIMIT ? OFFSET ?
+    """, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def contar_execucoes(job_id=None, status=None):
+    conn = get_db()
+    filtros = []
+    params = []
+    if job_id:
+        filtros.append("job_id=?")
+        params.append(job_id)
+    if status:
+        filtros.append("status=?")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM execucoes {where_sql}", params).fetchone()[0]
+    conn.close()
+    return total
 
 
 def obter_ultima_execucao(job_id):
@@ -294,6 +341,64 @@ def salvar_config(dados):
         )
     conn.commit()
     conn.close()
+
+
+def exportar_dados():
+    """Exporta jobs e configurações não sensíveis de sistema (sem secret_key/senha_admin)."""
+    jobs = listar_jobs()
+    config = obter_config()
+    chaves_excluidas = {"secret_key", "senha_admin"}
+    config_export = {k: v for k, v in config.items() if k not in chaves_excluidas}
+    return {
+        "versao": 1,
+        "exportado_em": datetime.now().isoformat(),
+        "jobs": jobs,
+        "configuracao": config_export,
+    }
+
+
+def importar_dados(payload):
+    """Importa configurações e jobs a partir de um JSON exportado."""
+    if not isinstance(payload, dict):
+        raise ValueError("Formato de JSON inválido.")
+
+    config_imp = payload.get("configuracao", {})
+    if isinstance(config_imp, dict):
+        chaves_protegidas = {"secret_key", "senha_admin"}
+        limpa = {k: str(v) for k, v in config_imp.items() if k not in chaves_protegidas and v is not None}
+        if limpa:
+            salvar_config(limpa)
+
+    jobs_imp = payload.get("jobs", [])
+    importados = 0
+    if isinstance(jobs_imp, list):
+        for j in jobs_imp:
+            if not isinstance(j, dict) or not j.get("nome") or not j.get("pasta_origem"):
+                continue
+            dias = j.get("dias_semana", "[]")
+            if isinstance(dias, str):
+                try:
+                    dias = json.loads(dias)
+                except Exception:
+                    dias = []
+            criar_job({
+                "nome": j["nome"],
+                "pasta_origem": j["pasta_origem"],
+                "destino_tipo": j.get("destino_tipo", "local"),
+                "destino_drive_id": j.get("destino_drive_id"),
+                "destino_drive_nome": j.get("destino_drive_nome"),
+                "destino_local": j.get("destino_local"),
+                "dias_semana": dias,
+                "horario": j.get("horario", "22:00"),
+                "horarios_extras": j.get("horarios_extras", ""),
+                "exclusoes": j.get("exclusoes", ""),
+                "pre_comando": j.get("pre_comando", ""),
+                "zip_senha": j.get("zip_senha", ""),
+                "retencao": int(j.get("retencao", 0) or 0),
+                "retencao_dias": int(j.get("retencao_dias", 0) or 0),
+            })
+            importados += 1
+    return importados
 
 
 def detectar_e_atualizar_google_json():

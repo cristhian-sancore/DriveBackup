@@ -4,12 +4,14 @@ backup_engine.py - Motor de backup (compressão, cópia local, upload Drive)
 import os
 import sys
 import io
+import fnmatch
+import subprocess
 import zipfile
 import shutil
 import time
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import models
 import drive_client
@@ -83,27 +85,64 @@ def _verificar_timeout(inicio, job_id=None):
         )
 
 
-def contar_arquivos(caminhos_str):
-    """Conta todos os arquivos, suportando múltiplos caminhos separados por pipe (|)"""
+def _parse_exclusoes(exclusoes_str):
+    if not exclusoes_str:
+        return []
+    return [p.strip() for p in exclusoes_str.replace(",", ";").split(";") if p.strip()]
+
+
+def _deve_excluir(nome, rel_path, padroes):
+    if not padroes:
+        return False
+    nome_l = nome.lower()
+    rel_l = rel_path.replace("\\", "/").lower()
+    for p in padroes:
+        pl = p.lower().rstrip("/\\")
+        if fnmatch.fnmatch(nome_l, pl) or fnmatch.fnmatch(rel_l, pl):
+            return True
+    return False
+
+
+def contar_arquivos(caminhos_str, exclusoes_str=""):
+    """Conta todos os arquivos, suportando múltiplos caminhos separados por pipe (|) e filtros de exclusão."""
     total = 0
+    padroes = _parse_exclusoes(exclusoes_str)
     caminhos = [c.strip() for c in caminhos_str.split('|') if c.strip()]
     
     for caminho in caminhos:
         if os.path.isfile(caminho):
-            total += 1
+            if not _deve_excluir(os.path.basename(caminho), os.path.basename(caminho), padroes):
+                total += 1
         elif os.path.exists(caminho):
             for root, dirs, files in os.walk(caminho):
-                total += len(files)
+                dirs[:] = [d for d in dirs if not _deve_excluir(d, os.path.relpath(os.path.join(root, d), caminho), padroes)]
+                for f in files:
+                    rel = os.path.relpath(os.path.join(root, f), caminho)
+                    if not _deve_excluir(f, rel, padroes):
+                        total += 1
     return total
 
 
-def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
+def _abrir_zip_escrita(caminho_zip, zip_senha=""):
+    if zip_senha:
+        import pyzipper
+        zf = pyzipper.AESZipFile(
+            caminho_zip, 'w',
+            compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES
+        )
+        zf.setpassword(zip_senha.encode("utf-8"))
+        return zf, True
+    return zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED, allowZip64=True), False
+
+
+def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None, exclusoes_str="", zip_senha=""):
     """
-    Compacta as origens dadas em um arquivo ZIP. 'origens_str' pode conter 
-    múltiplos caminhos de arquivos/pastas separados por '|'.
-    Retorna (caminho_zip, total_arquivos, tamanho_bytes).
+    Compacta as origens dadas em um arquivo ZIP (com suporte a exclusões e senha AES).
+    Retorna (caminho_zip, total_arquivos, tamanho_bytes, arquivos_ignorados).
     """
-    total_arquivos = contar_arquivos(origens_str)
+    padroes = _parse_exclusoes(exclusoes_str)
+    total_arquivos = contar_arquivos(origens_str, exclusoes_str)
     if total_arquivos == 0:
         raise ValueError(f"As origens ('{origens_str}') estao vazias ou inacessiveis. Nenhum arquivo encontrado.")
     
@@ -111,7 +150,8 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
     ignorados = 0
     caminhos = [c.strip() for c in origens_str.split('|') if c.strip()]
 
-    with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+    zf, usar_aes = _abrir_zip_escrita(caminho_zip, zip_senha)
+    with zf:
         for caminho_origem in caminhos:
             if not os.path.exists(caminho_origem):
                 log(f"[ZIP] Aviso: Caminho nao encontrado: {caminho_origem}")
@@ -119,7 +159,8 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
 
             # Se for um unico arquivo
             if os.path.isfile(caminho_origem):
-                # Verifica abort e timeout
+                if _deve_excluir(os.path.basename(caminho_origem), os.path.basename(caminho_origem), padroes):
+                    continue
                 if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
                     raise InterruptedError("Backup abortado pelo usuario.")
                 if inicio:
@@ -127,17 +168,20 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
                 
                 arcname = os.path.basename(caminho_origem)
                 try:
-                    zinfo = zipfile.ZipInfo.from_file(caminho_origem, arcname)
-                    zinfo.compress_type = zipfile.ZIP_DEFLATED
-                    with zf.open(zinfo, 'w') as dest, open(caminho_origem, 'rb') as src:
-                        while True:
-                            if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
-                                raise InterruptedError("Backup abortado pelo usuario.")
-                            if inicio:
-                                _verificar_timeout(inicio, job_id)
-                            chunk = src.read(1024 * 1024 * 5) # 5MB
-                            if not chunk: break
-                            dest.write(chunk)
+                    if usar_aes:
+                        zf.write(caminho_origem, arcname)
+                    else:
+                        zinfo = zipfile.ZipInfo.from_file(caminho_origem, arcname)
+                        zinfo.compress_type = zipfile.ZIP_DEFLATED
+                        with zf.open(zinfo, 'w') as dest, open(caminho_origem, 'rb') as src:
+                            while True:
+                                if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                                    raise InterruptedError("Backup abortado pelo usuario.")
+                                if inicio:
+                                    _verificar_timeout(inicio, job_id)
+                                chunk = src.read(1024 * 1024 * 5) # 5MB
+                                if not chunk: break
+                                dest.write(chunk)
                 except (PermissionError, OSError) as e:
                     ignorados += 1
                     log(f"[ZIP] Nao foi possivel compactar {caminho_origem}: {e}")
@@ -151,32 +195,38 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
             # Se for uma pasta
             else:
                 for root, dirs, files in os.walk(caminho_origem):
+                    dirs[:] = [d for d in dirs if not _deve_excluir(d, os.path.relpath(os.path.join(root, d), caminho_origem), padroes)]
                     for arquivo in files:
-                        # Verifica abort e timeout
+                        rel_local = os.path.relpath(os.path.join(root, arquivo), caminho_origem)
+                        if _deve_excluir(arquivo, rel_local, padroes):
+                            continue
                         if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
                             raise InterruptedError("Backup abortado pelo usuario.")
                         if inicio:
                             _verificar_timeout(inicio, job_id)
                         
                         caminho_completo = os.path.join(root, arquivo)
-                        arcname = os.path.relpath(caminho_completo, caminho_origem)
+                        arcname = rel_local
                         
                         # Evita caminhos duplicados na raiz do zip se for mais de uma pasta
                         if len(caminhos) > 1:
                             arcname = os.path.join(os.path.basename(caminho_origem), arcname)
 
                         try:
-                            zinfo = zipfile.ZipInfo.from_file(caminho_completo, arcname)
-                            zinfo.compress_type = zipfile.ZIP_DEFLATED
-                            with zf.open(zinfo, 'w') as dest, open(caminho_completo, 'rb') as src:
-                                while True:
-                                    if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
-                                        raise InterruptedError("Backup abortado pelo usuario.")
-                                    if inicio:
-                                        _verificar_timeout(inicio, job_id)
-                                    chunk = src.read(1024 * 1024 * 5) # 5MB
-                                    if not chunk: break
-                                    dest.write(chunk)
+                            if usar_aes:
+                                zf.write(caminho_completo, arcname)
+                            else:
+                                zinfo = zipfile.ZipInfo.from_file(caminho_completo, arcname)
+                                zinfo.compress_type = zipfile.ZIP_DEFLATED
+                                with zf.open(zinfo, 'w') as dest, open(caminho_completo, 'rb') as src:
+                                    while True:
+                                        if job_id and job_id in _abort_flags and _abort_flags[job_id].is_set():
+                                            raise InterruptedError("Backup abortado pelo usuario.")
+                                        if inicio:
+                                            _verificar_timeout(inicio, job_id)
+                                        chunk = src.read(1024 * 1024 * 5) # 5MB
+                                        if not chunk: break
+                                        dest.write(chunk)
                         except (PermissionError, OSError) as e:
                             ignorados += 1
                             log(f"[ZIP] Nao foi possivel compactar {caminho_completo}: {e}")
@@ -192,10 +242,16 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
     
     # Verificação de integridade do ZIP
     log(f"[ZIP] Verificando integridade do arquivo...")
-    with zipfile.ZipFile(caminho_zip, 'r') as zf:
-        resultado = zf.testzip()
-        if resultado is not None:
-            raise ValueError(f"Arquivo ZIP corrompido! Primeiro arquivo com erro: {resultado}")
+    if usar_aes:
+        import pyzipper
+        with pyzipper.AESZipFile(caminho_zip, 'r') as zf_check:
+            zf_check.setpassword(zip_senha.encode("utf-8"))
+            resultado = zf_check.testzip()
+    else:
+        with zipfile.ZipFile(caminho_zip, 'r') as zf_check:
+            resultado = zf_check.testzip()
+    if resultado is not None:
+        raise ValueError(f"Arquivo ZIP corrompido! Primeiro arquivo com erro: {resultado}")
     log(f"[ZIP] Integridade OK!")
     
     return caminho_zip, total_arquivos, tamanho, ignorados
@@ -218,12 +274,14 @@ def verificar_espaco_disco(caminho, tamanho_necessario):
 
 
 def limpar_backups_antigos(job, config):
-    """Remove backups antigos conforme a política de retenção do job."""
-    retencao = job.get("retencao", 0)
-    if retencao <= 0:
+    """Remove backups antigos conforme a política de retenção (quantidade e/ou dias) do job."""
+    retencao = int(job.get("retencao") or 0)
+    retencao_dias = int(job.get("retencao_dias") or 0)
+    if retencao <= 0 and retencao_dias <= 0:
         return  # Sem limite = manter todos
     
     nome_safe = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in job['nome'])
+    limite_data = datetime.now() - timedelta(days=retencao_dias) if retencao_dias > 0 else None
     
     # Limpa backups locais
     if job["destino_tipo"] in ("local", "ambos") and job.get("destino_local"):
@@ -233,8 +291,16 @@ def limpar_backups_antigos(job, config):
                 [f for f in os.listdir(pasta) if f.startswith(nome_safe) and f.endswith('.zip')],
                 reverse=True  # Mais recente primeiro
             )
-            excedentes = arquivos[retencao:]
-            for arq in excedentes:
+            para_remover = set(arquivos[retencao:]) if retencao > 0 else set()
+            if limite_data:
+                for arq in arquivos:
+                    caminho_arq = os.path.join(pasta, arq)
+                    try:
+                        if datetime.fromtimestamp(os.path.getmtime(caminho_arq)) < limite_data:
+                            para_remover.add(arq)
+                    except OSError:
+                        pass
+            for arq in sorted(para_remover):
                 try:
                     os.remove(os.path.join(pasta, arq))
                     log(f"[Retencao] Backup antigo removido: {arq}")
@@ -254,10 +320,20 @@ def limpar_backups_antigos(job, config):
                 key=lambda x: x.get('createdTime', ''),
                 reverse=True
             )
-            excedentes = zips_job[retencao:]
-            for arq in excedentes:
+            ids_remover = {a['id']: a for a in zips_job[retencao:]} if retencao > 0 else {}
+            if limite_data:
+                for arq in zips_job:
+                    ct = arq.get('createdTime', '')
+                    if ct:
+                        try:
+                            dt_arq = datetime.fromisoformat(ct.replace('Z', '+00:00')).replace(tzinfo=None)
+                            if dt_arq < limite_data:
+                                ids_remover[arq['id']] = arq
+                        except ValueError:
+                            pass
+            for fid, arq in ids_remover.items():
                 try:
-                    drive_client.excluir_arquivo(json_path, arq['id'])
+                    drive_client.excluir_arquivo(json_path, fid)
                     log(f"[Retencao] Backup antigo removido do Drive: {arq['name']}")
                 except Exception as e:
                     log(f"[Retencao] Erro ao remover do Drive {arq['name']}: {e}")
@@ -308,6 +384,19 @@ def executar_backup(job_id):
     caminho_zip_temp = os.path.join(tempfile.gettempdir(), nome_zip)
 
     try:
+        # ===== ETAPA 0: Pré-comando (ex: gbak Firebird) =====
+        pre_cmd = (job.get("pre_comando") or "").strip()
+        if pre_cmd:
+            _set_progresso(job_id, "verificando", 0, "Executando pré-comando...")
+            log(f"[Backup] Executando pre-comando: {pre_cmd}")
+            proc = subprocess.run(
+                pre_cmd, shell=True, capture_output=True, text=True, timeout=3600
+            )
+            if proc.returncode != 0:
+                saida_err = (proc.stderr or proc.stdout or "").strip()
+                raise RuntimeError(f"Pré-comando falhou (código {proc.returncode}): {saida_err[:300]}")
+            log("[Backup] Pre-comando concluido com sucesso.")
+
         # Verifica se ao menos uma pasta de origem existe (separa por pipe)
         caminhos_origem = [c.strip() for c in job["pasta_origem"].split('|') if c.strip()]
         if not caminhos_origem:
@@ -340,7 +429,9 @@ def executar_backup(job_id):
         log(f"[Backup] Compactando: {job['pasta_origem']}")
 
         caminho_zip, total_arquivos, tamanho_zip, arquivos_ignorados = compactar_pasta(
-            job["pasta_origem"], caminho_zip_temp, job_id, inicio
+            job["pasta_origem"], caminho_zip_temp, job_id, inicio,
+            exclusoes_str=job.get("exclusoes", ""),
+            zip_senha=job.get("zip_senha", "")
         )
         _verificar_timeout(inicio, job_id)  # Verifica timeout após compactação
 
@@ -368,6 +459,20 @@ def executar_backup(job_id):
                 raise Exception("Caminho das credenciais do Google Drive nao configurado.")
             if not drive_id:
                 raise Exception("Pasta de destino no Google Drive nao selecionada.")
+
+            # Verifica cota disponível no Google Drive antes do upload
+            try:
+                cota = drive_client.obter_info_cota(json_path)
+                livre_drive = cota.get("livre_bytes")
+                if livre_drive is not None and tamanho_zip > livre_drive:
+                    raise IOError(
+                        f"Espaco insuficiente no Google Drive! Livre: {notificador.formatar_tamanho(livre_drive)}, "
+                        f"Necessario: {notificador.formatar_tamanho(tamanho_zip)}"
+                    )
+            except IOError:
+                raise
+            except Exception as ce:
+                log(f"[Backup] Aviso: nao foi possivel verificar cota do Drive: {ce}")
 
             _set_progresso(job_id, "enviando_drive", 0, "Iniciando upload para Google Drive...")
             log(f"[Backup] Fazendo upload para Drive (pasta: {drive_id})")

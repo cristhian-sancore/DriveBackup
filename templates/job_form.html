@@ -117,19 +117,67 @@
             </div>
 
             <!-- Horário -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="horario"><i class="fas fa-clock"></i> Horário Principal</label>
+                    <input type="time" id="horario" name="horario" class="form-control form-control-time"
+                           value="{{ job.horario if job else '22:00' }}">
+                </div>
+                <div class="form-group">
+                    <label for="horarios_extras"><i class="fas fa-clock"></i> Horários Extras (opcional)</label>
+                    <input type="text" id="horarios_extras" name="horarios_extras" class="form-control"
+                           placeholder="Ex: 12:00, 18:00"
+                           value="{{ job.horarios_extras if job and job.horarios_extras else '' }}">
+                    <small class="form-hint">Separe múltiplos horários por vírgula.</small>
+                </div>
+            </div>
+
+            <!-- Filtros e Pré-comando -->
             <div class="form-group">
-                <label for="horario"><i class="fas fa-clock"></i> Horário</label>
-                <input type="time" id="horario" name="horario" class="form-control form-control-time"
-                       value="{{ job.horario if job else '22:00' }}">
+                <label for="exclusoes"><i class="fas fa-filter"></i> Filtros de Exclusão (opcional)</label>
+                <input type="text" id="exclusoes" name="exclusoes" class="form-control"
+                       placeholder="Ex: *.tmp;*.log;temp;cache"
+                       value="{{ job.exclusoes if job and job.exclusoes else '' }}">
+                <small class="form-hint">Arquivos ou pastas a ignorar, separados por ponto e vírgula (<strong>;</strong>).</small>
+            </div>
+
+            <div class="form-group">
+                <label for="pre_comando"><i class="fas fa-terminal"></i> Pré-comando antes do Backup (opcional)</label>
+                <input type="text" id="pre_comando" name="pre_comando" class="form-control"
+                       placeholder="Ex: gbak -b -user SYSDBA -pass masterkey C:\Banco\SIA.FDB C:\Backup\sia.fbk"
+                       value="{{ job.pre_comando if job and job.pre_comando else '' }}">
+                <small class="form-hint">Comando executado antes da compactação (útil para dump de banco Firebird/SQL).</small>
+            </div>
+
+            <!-- Criptografia ZIP -->
+            <div class="form-group">
+                <label for="zip_senha"><i class="fas fa-lock"></i> Senha de Criptografia do ZIP (AES-256, opcional)</label>
+                <input type="password" id="zip_senha" name="zip_senha" class="form-control"
+                       placeholder="{{ '•••••••• (protegido - deixe em branco para manter)' if job and job.zip_senha else 'Sem senha' }}"
+                       value="">
+                {% if job and job.zip_senha %}
+                <label style="margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem;">
+                    <input type="checkbox" name="remover_zip_senha" value="1"> Remover senha do ZIP
+                </label>
+                {% endif %}
             </div>
 
             <!-- Retenção -->
-            <div class="form-group">
-                <label for="retencao"><i class="fas fa-trash-restore"></i> Política de Retenção</label>
-                <input type="number" id="retencao" name="retencao" class="form-control" min="0" max="365"
-                       placeholder="0 = Manter todos"
-                       value="{{ job.retencao if job and job.retencao else '0' }}">
-                <small class="form-hint">Quantos backups manter. Defina <strong>0</strong> para manter todos (sem limite). Ex: <strong>7</strong> = mantém apenas os últimos 7 backups.</small>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="retencao"><i class="fas fa-trash-restore"></i> Retenção por Quantidade</label>
+                    <input type="number" id="retencao" name="retencao" class="form-control" min="0" max="365"
+                           placeholder="0 = Manter todos"
+                           value="{{ job.retencao if job and job.retencao else '0' }}">
+                    <small class="form-hint">Últimos <strong>N</strong> backups a manter (<strong>0</strong> = todos).</small>
+                </div>
+                <div class="form-group">
+                    <label for="retencao_dias"><i class="fas fa-calendar-times"></i> Retenção por Dias</label>
+                    <input type="number" id="retencao_dias" name="retencao_dias" class="form-control" min="0" max="3650"
+                           placeholder="0 = Sem limite de dias"
+                           value="{{ job.retencao_dias if job and job.retencao_dias else '0' }}">
+                    <small class="form-hint">Apagar backups com mais de <strong>X</strong> dias (<strong>0</strong> = não expirar).</small>
+                </div>
             </div>
 
             <!-- Botões -->

@@ -206,6 +206,52 @@ class TestAuditoria(unittest.TestCase):
         self.assertEqual(cfg["evolution_apikey"], "api_secreta")
         self.assertEqual(cfg["git_token"], "ghp_secreto")
 
+    def test_novas_funcionalidades_exclusoes_aes_export_senha(self):
+        # 1. Exclusões + Criptografia AES no ZIP
+        src_dir = os.path.join(self.tmp_dir.name, "origem_adv")
+        os.makedirs(src_dir, exist_ok=True)
+        with open(os.path.join(src_dir, "keep.txt"), "w", encoding="utf-8") as f:
+            f.write("manter")
+        with open(os.path.join(src_dir, "lixo.tmp"), "w", encoding="utf-8") as f:
+            f.write("ignorar")
+
+        zip_path = os.path.join(self.tmp_dir.name, "seguro.zip")
+        _, total, _, ignorados = backup_engine.compactar_pasta(
+            src_dir, zip_path, exclusoes_str="*.tmp", zip_senha="senha_forte"
+        )
+        self.assertEqual(total, 1)
+        self.assertEqual(ignorados, 0)
+
+        import pyzipper
+        with pyzipper.AESZipFile(zip_path, "r") as zf:
+            zf.setpassword(b"senha_forte")
+            self.assertEqual(zf.namelist(), ["keep.txt"])
+            self.assertEqual(zf.read("keep.txt"), b"manter")
+
+        # 2. Exportar / Importar jobs e Alterar senha
+        jid = models.criar_job({
+            "nome": "JobExport",
+            "pasta_origem": src_dir,
+            "destino_tipo": "local",
+            "destino_local": self.tmp_dir.name,
+            "dias_semana": ["seg"],
+            "horario": "22:00",
+            "horarios_extras": "12:00, 18:00",
+            "exclusoes": "*.tmp",
+            "pre_comando": "",
+            "zip_senha": "abc",
+            "retencao": 5,
+            "retencao_dias": 30,
+        })
+        self.assertGreater(jid, 0)
+        exportado = models.exportar_dados()
+        self.assertEqual(len(exportado["jobs"]), 1)
+        self.assertNotIn("secret_key", exportado["configuracao"])
+        self.assertNotIn("senha_admin", exportado["configuracao"])
+
+        qtd_imp = models.importar_dados(exportado)
+        self.assertEqual(qtd_imp, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

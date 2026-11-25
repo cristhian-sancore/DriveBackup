@@ -258,7 +258,7 @@ def editar_job(job_id):
         return redirect(url_for("listar_jobs_view"))
 
     if request.method == "POST":
-        dados = _parse_job_form(request.form)
+        dados = _parse_job_form(request.form, job_existente=job)
         models.atualizar_job(job_id, dados)
         job = models.obter_job(job_id)
         scheduler.agendar_job(job)
@@ -306,8 +306,19 @@ def excluir_job(job_id):
     return redirect(url_for("listar_jobs_view"))
 
 
-def _parse_job_form(form):
+def _parse_job_form(form, job_existente=None):
     dias = form.getlist("dias_semana")
+    if form.get("remover_zip_senha") == "1":
+        zip_senha = ""
+    else:
+        nova_zip_senha = form.get("zip_senha", "").strip()
+        if nova_zip_senha:
+            zip_senha = nova_zip_senha
+        elif job_existente:
+            zip_senha = job_existente.get("zip_senha") or ""
+        else:
+            zip_senha = ""
+
     return {
         "nome": form.get("nome", "").strip(),
         "pasta_origem": form.get("pasta_origem", "").strip(),
@@ -317,7 +328,12 @@ def _parse_job_form(form):
         "destino_local": form.get("destino_local", "").strip() or None,
         "dias_semana": dias,
         "horario": form.get("horario", "22:00").strip(),
-        "retencao": int(form.get("retencao", 0) or 0)
+        "horarios_extras": form.get("horarios_extras", "").strip(),
+        "exclusoes": form.get("exclusoes", "").strip(),
+        "pre_comando": form.get("pre_comando", "").strip(),
+        "zip_senha": zip_senha,
+        "retencao": int(form.get("retencao", 0) or 0),
+        "retencao_dias": int(form.get("retencao_dias", 0) or 0),
     }
 
 
@@ -328,8 +344,26 @@ def _parse_job_form(form):
 @app.route("/logs")
 @login_required
 def logs_view():
-    execucoes = models.listar_execucoes(limit=100)
-    return render_template("logs.html", execucoes=execucoes)
+    job_id = request.args.get("job_id", type=int)
+    status = request.args.get("status", "").strip() or None
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = 50
+    offset = (page - 1) * per_page
+
+    execucoes = models.listar_execucoes(limit=per_page, job_id=job_id, status=status, offset=offset)
+    total = models.contar_execucoes(job_id=job_id, status=status)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    jobs = models.listar_jobs()
+    return render_template(
+        "logs.html",
+        execucoes=execucoes,
+        jobs=jobs,
+        filtro_job_id=job_id,
+        filtro_status=status or "",
+        page=page,
+        total_pages=total_pages,
+        total=total,
+    )
 
 
 # ========================
@@ -418,6 +452,126 @@ def testar_whatsapp():
     config = models.obter_config()
     ok = notificador.testar_notificacao(config)
     return jsonify({"ok": ok, "mensagem": "Mensagem enviada!" if ok else "Falha ao enviar."})
+
+
+@app.route("/settings/upload-json", methods=["POST"])
+@login_required
+def upload_json_credencial():
+    """Recebe arquivo client_secret.json ou service_account.json pelo painel."""
+    arquivo = request.files.get("arquivo_json")
+    if not arquivo or not arquivo.filename:
+        flash("Selecione um arquivo .json válido.", "error")
+        return redirect(url_for("settings_view"))
+
+    if not arquivo.filename.lower().endswith(".json"):
+        flash("Apenas arquivos .json são permitidos.", "error")
+        return redirect(url_for("settings_view"))
+
+    try:
+        conteudo = arquivo.read().decode("utf-8")
+        dados = json.loads(conteudo)
+    except Exception:
+        flash("O arquivo enviado não é um JSON válido.", "error")
+        return redirect(url_for("settings_view"))
+
+    if not (dados.get("type") == "service_account" or "web" in dados or "installed" in dados):
+        flash("JSON inválido: precisa ser um arquivo OAuth (web/installed) ou Service Account do Google.", "error")
+        return redirect(url_for("settings_view"))
+
+    os.makedirs(models.DATA_DIR, exist_ok=True)
+    nome_seguro = "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in os.path.basename(arquivo.filename))
+    destino = os.path.join(models.DATA_DIR, nome_seguro)
+    with open(destino, "w", encoding="utf-8") as f:
+        json.dump(dados, f, indent=2)
+
+    models.salvar_config({"google_json_path": destino})
+    drive_client._service = None
+    flash(f"Credencial '{nome_seguro}' salva com sucesso!", "success")
+    return redirect(url_for("settings_view"))
+
+
+@app.route("/settings/alterar-senha", methods=["POST"])
+@login_required
+def alterar_senha_admin():
+    """Altera a senha de acesso ao painel."""
+    senha_atual = request.form.get("senha_atual", "")
+    nova_senha = request.form.get("nova_senha", "")
+    confirmacao = request.form.get("confirmar_senha", "")
+
+    if len(nova_senha) < 4:
+        flash("A nova senha deve ter pelo menos 4 caracteres.", "error")
+        return redirect(url_for("settings_view"))
+    if nova_senha != confirmacao:
+        flash("A nova senha e a confirmação não conferem.", "error")
+        return redirect(url_for("settings_view"))
+
+    conn = models.get_db()
+    try:
+        row = conn.execute("SELECT valor FROM configuracao WHERE chave='senha_admin'").fetchone()
+        senha_hash = row["valor"] if row and row["valor"] else generate_password_hash("f@$p3l")
+        if not check_password_hash(senha_hash, senha_atual):
+            flash("Senha atual incorreta.", "error")
+            return redirect(url_for("settings_view"))
+
+        conn.execute(
+            "INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('senha_admin', ?)",
+            (generate_password_hash(nova_senha),)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    flash("Senha do painel alterada com sucesso!", "success")
+    return redirect(url_for("settings_view"))
+
+
+@app.route("/settings/exportar")
+@login_required
+def exportar_config_jobs():
+    """Exporta jobs e configurações em JSON para backup/migração."""
+    dados = models.exportar_dados()
+    conteudo = json.dumps(dados, indent=2, ensure_ascii=False)
+    nome = f"drivebackup_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(
+        conteudo,
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={nome}"}
+    )
+
+
+@app.route("/settings/importar", methods=["POST"])
+@login_required
+def importar_config_jobs():
+    """Importa jobs e configurações a partir de um arquivo JSON exportado."""
+    arquivo = request.files.get("arquivo_import")
+    if not arquivo or not arquivo.filename:
+        flash("Selecione um arquivo JSON para importar.", "error")
+        return redirect(url_for("settings_view"))
+
+    try:
+        payload = json.loads(arquivo.read().decode("utf-8"))
+        qtd = models.importar_dados(payload)
+        scheduler.carregar_todos_jobs()
+        flash(f"Importação concluída! {qtd} job(s) importado(s).", "success")
+    except Exception as e:
+        flash(f"Erro ao importar JSON: {e}", "error")
+    return redirect(url_for("settings_view"))
+
+
+@app.route("/api/sistema/logs")
+@login_required
+def api_sistema_logs():
+    """Retorna as últimas N linhas do arquivo DriveBackup.log."""
+    linhas = min(1000, max(20, request.args.get("linhas", 200, type=int)))
+    from logger import LOG_FILE
+    if not os.path.exists(LOG_FILE):
+        return jsonify({"ok": True, "linhas": ["Arquivo de log ainda não foi criado."]})
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            todas = f.readlines()
+        return jsonify({"ok": True, "linhas": [l.rstrip("\r\n") for l in todas[-linhas:]]})
+    except Exception as e:
+        return jsonify({"ok": False, "erro": str(e), "linhas": []})
 
 
 # ========================
@@ -678,6 +832,57 @@ def api_drive_criar_pasta():
         return jsonify({"pasta": pasta, "erro": None})
     except Exception as e:
         return jsonify({"erro": str(e)})
+
+
+@app.route("/api/drive/arquivos/<folder_id>")
+@login_required
+def api_drive_arquivos(folder_id):
+    """Lista arquivos de backup dentro de uma pasta do Google Drive."""
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    if not json_path:
+        return jsonify({"erro": "Credenciais do Google Drive não configuradas.", "arquivos": []})
+    try:
+        arquivos = drive_client.listar_arquivos_pasta(json_path, folder_id)
+        return jsonify({"arquivos": arquivos, "erro": None})
+    except Exception as e:
+        return jsonify({"erro": str(e), "arquivos": []})
+
+
+@app.route("/api/drive/download/<file_id>")
+@login_required
+def api_drive_download(file_id):
+    """Faz download direto de um arquivo do Google Drive pelo painel."""
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    if not json_path:
+        abort(400)
+    try:
+        meta, stream = drive_client.baixar_arquivo(json_path, file_id)
+        nome = meta.get("name", "backup.zip")
+        return Response(
+            stream,
+            mimetype=meta.get("mimeType", "application/octet-stream"),
+            headers={"Content-Disposition": f'attachment; filename="{nome}"'}
+        )
+    except Exception as e:
+        flash(f"Erro ao baixar arquivo do Drive: {e}", "error")
+        return redirect(url_for("listar_jobs_view"))
+
+
+@app.route("/api/drive/deletar/<file_id>", methods=["POST"])
+@login_required
+def api_drive_deletar(file_id):
+    """Exclui um arquivo do Google Drive pelo painel."""
+    config = models.obter_config()
+    json_path = config.get("google_json_path", "")
+    if not json_path:
+        return jsonify({"ok": False, "erro": "Credenciais não configuradas."})
+    try:
+        drive_client.deletar_arquivo(json_path, file_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "erro": str(e)})
 
 
 # ========================

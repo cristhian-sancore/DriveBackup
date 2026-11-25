@@ -126,6 +126,12 @@
             <a href="{{ url_for('editar_job', job_id=job.id) }}" class="btn btn-sm btn-ghost" title="Editar">
                 <i class="fas fa-pen"></i>
             </a>
+            {% if job.destino_tipo in ['drive', 'ambos'] and job.destino_drive_id %}
+            <button type="button" class="btn btn-sm btn-ghost" title="Ver backups no Google Drive"
+                    onclick="abrirBackupsDrive('{{ job.destino_drive_id }}', '{{ job.nome|e }}')">
+                <i class="fas fa-cloud-download-alt"></i>
+            </button>
+            {% endif %}
             <form method="POST" action="{{ url_for('excluir_job', job_id=job.id) }}" style="display:inline;"
                   onsubmit="return confirm('Excluir o job \'{{ job.nome }}\'?')">
                 <button type="submit" class="btn btn-sm btn-danger" title="Excluir">
@@ -161,6 +167,18 @@
     </div>
 </div>
 {% endif %}
+<!-- Modal Arquivos no Google Drive -->
+<div class="modal-overlay" id="drive-files-modal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal modal-lg" onclick="event.stopPropagation()" style="max-width:760px; width:95%;">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="drive-files-title"><i class="fab fa-google-drive"></i> Backups no Google Drive</h3>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('drive-files-modal').style.display='none'">Fechar</button>
+        </div>
+        <div class="modal-body" id="drive-files-body" style="max-height:60vh; overflow:auto;">
+            Carregando...
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -224,6 +242,63 @@
             });
     }
     
+    function abrirBackupsDrive(folderId, jobNome) {
+        const modal = document.getElementById('drive-files-modal');
+        const title = document.getElementById('drive-files-title');
+        const body = document.getElementById('drive-files-body');
+        title.innerHTML = `<i class="fab fa-google-drive"></i> Backups no Drive — ${jobNome}`;
+        body.innerHTML = '<p><i class="fas fa-spinner fa-spin"></i> Carregando arquivos do Google Drive...</p>';
+        modal.style.display = 'flex';
+        carregarBackupsDrive(folderId, jobNome);
+    }
+
+    function carregarBackupsDrive(folderId, jobNome) {
+        const body = document.getElementById('drive-files-body');
+        fetch(`/api/drive/arquivos/${encodeURIComponent(folderId)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.erro) {
+                    body.innerHTML = `<p class="text-danger">Erro: ${data.erro}</p>`;
+                    return;
+                }
+                const arqs = (data.arquivos || []).filter(a => a.mimeType !== 'application/vnd.google-apps.folder');
+                if (!arqs.length) {
+                    body.innerHTML = '<p class="text-muted">Nenhum arquivo encontrado nesta pasta do Drive.</p>';
+                    return;
+                }
+                let html = '<table class="table"><thead><tr><th>Arquivo</th><th>Data</th><th>Tamanho</th><th>Ações</th></tr></thead><tbody>';
+                arqs.forEach(a => {
+                    const mb = a.size ? (Number(a.size) / (1024 * 1024)).toFixed(1) + ' MB' : '-';
+                    const dt = a.createdTime ? a.createdTime.slice(0, 16).replace('T', ' ') : '-';
+                    html += `<tr>
+                        <td>${a.name}</td>
+                        <td>${dt}</td>
+                        <td>${mb}</td>
+                        <td style="white-space:nowrap;">
+                            <a href="/api/drive/download/${encodeURIComponent(a.id)}" class="btn btn-xs btn-primary" title="Baixar"><i class="fas fa-download"></i></a>
+                            <button type="button" class="btn btn-xs btn-danger" title="Excluir" onclick="deletarArquivoDrive('${a.id}', '${folderId}', '${jobNome.replace(/'/g, "\\'")}')"><i class="fas fa-trash"></i></button>
+                        </td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                body.innerHTML = html;
+            })
+            .catch(e => { body.innerHTML = `<p class="text-danger">Erro: ${e}</p>`; });
+    }
+
+    function deletarArquivoDrive(fileId, folderId, jobNome) {
+        if (!confirm('Excluir este arquivo permanentemente do Google Drive?')) return;
+        fetch(`/api/drive/deletar/${encodeURIComponent(fileId)}`, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    carregarBackupsDrive(folderId, jobNome);
+                } else {
+                    alert('Erro ao excluir: ' + (data.erro || 'desconhecido'));
+                }
+            });
+    }
+
     // Polling a cada 2 segundos
     setInterval(verificarProgressos, 2000);
     verificarProgressos();
