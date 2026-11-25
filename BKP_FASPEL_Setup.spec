@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates'), ('static', 'static'), ('data', 'data'), ('nssm.exe', '.'), ('Desinstalar_BKP.exe', '.')],
+    datas=[('templates', 'templates'), ('static', 'static'), ('nssm.exe', '.'), ('Desinstalar_BKP.exe', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -16,6 +16,43 @@ function atualizarRelogio() {
 atualizarRelogio();
 setInterval(atualizarRelogio, 1000);
 
+// ===== Proteção CSRF automática para formulários e fetch POST =====
+function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : '';
+}
+
+(function() {
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init) {
+        init = init || {};
+        const method = (init.method || 'GET').toUpperCase();
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+            const headers = new Headers(init.headers || {});
+            if (!headers.has('X-CSRF-Token')) {
+                headers.set('X-CSRF-Token', getCsrfToken());
+            }
+            init.headers = headers;
+        }
+        return originalFetch.call(this, input, init);
+    };
+})();
+
+document.addEventListener('DOMContentLoaded', function() {
+    const token = getCsrfToken();
+    if (token) {
+        document.querySelectorAll('form[method="POST"], form[method="post"]').forEach(form => {
+            if (!form.querySelector('input[name="csrf_token"]')) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'csrf_token';
+                input.value = token;
+                form.appendChild(input);
+            }
+        });
+    }
+});
+
 // ===== Auto-hide flash messages =====
 document.addEventListener('DOMContentLoaded', function() {
     const flashes = document.querySelectorAll('.flash-message');
@@ -42,7 +79,7 @@ function monitorarProgresso(jobId, callback) {
         const data = JSON.parse(event.data);
         callback(data);
         
-        if (data.etapa === 'concluido' || data.etapa === 'erro' || data.etapa === 'idle') {
+        if (data.etapa === 'concluido' || data.etapa === 'erro' || data.etapa === 'idle' || data.etapa === 'abortado' || data.etapa === 'timeout') {
             source.close();
         }
     };

@@ -26,7 +26,6 @@ def build_exe():
         "--name", "BKP_FASPEL_Setup",
         f"--add-data=templates{sep}templates",
         f"--add-data=static{sep}static",
-        f"--add-data=data{sep}data",
         f"--add-data=nssm.exe{sep}.",
         f"--add-data=Desinstalar_BKP.exe{sep}.",
         "app.py"

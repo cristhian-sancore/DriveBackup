@@ -7,6 +7,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 import models
 import backup_engine
+from logger import app_logger
+from logger import app_logger
 
 _scheduler = None
 
@@ -45,19 +47,19 @@ def agendar_job(job):
         scheduler.remove_job(job_tag)
 
     if not job.get("ativo"):
-        print(f"[Scheduler] Job '{job['nome']}' esta inativo, nao agendado.")
+        app_logger.info(f"[Scheduler] Job '{job['nome']}' esta inativo, nao agendado.")
         return
 
     # Parse dias da semana
     dias_semana = json.loads(job.get("dias_semana", "[]"))
     if not dias_semana:
-        print(f"[Scheduler] Job '{job['nome']}' sem dias configurados.")
+        app_logger.info(f"[Scheduler] Job '{job['nome']}' sem dias configurados.")
         return
 
     # Converte para formato cron
     dias_cron = ",".join([DIAS_MAP.get(d, d) for d in dias_semana if d in DIAS_MAP])
     if not dias_cron:
-        print(f"[Scheduler] Job '{job['nome']}' dias inválidos: {dias_semana}")
+        app_logger.info(f"[Scheduler] Job '{job['nome']}' dias inválidos: {dias_semana}")
         return
 
     # Parse horário
@@ -82,7 +84,7 @@ def agendar_job(job):
         misfire_grace_time=3600  # 1 hora de tolerância
     )
 
-    print(f"[Scheduler] Job '{job['nome']}' agendado: {dias_cron} às {hora:02d}:{minuto:02d}")
+    app_logger.info(f"[Scheduler] Job '{job['nome']}' agendado: {dias_cron} às {hora:02d}:{minuto:02d}")
 
 
 def remover_job(job_id):
@@ -92,11 +94,12 @@ def remover_job(job_id):
     existing = scheduler.get_job(job_tag)
     if existing:
         scheduler.remove_job(job_tag)
-        print(f"[Scheduler] Job {job_id} removido do agendamento.")
+        app_logger.info(f"[Scheduler] Job {job_id} removido do agendamento.")
 
 
 def verificar_timeouts_jobs(tempo_limite_horas=12):
     """Verifica execuções em andamento que ultrapassaram o limite (padrão 12 horas) e as aborta automaticamente."""
+    conn = None
     try:
         from datetime import datetime
         conn = models.get_db()
@@ -108,7 +111,7 @@ def verificar_timeouts_jobs(tempo_limite_horas=12):
                 inicio_dt = datetime.fromisoformat(r['inicio'])
                 segundos = (agora - inicio_dt).total_seconds()
                 if segundos > tempo_limite_horas * 3600:
-                    print(f"[Timeout Watchdog] Execucao {r['id']} (Job {r['job_id']}) excedeu {tempo_limite_horas}h. Abortando...")
+                    app_logger.warning(f"[Timeout Watchdog] Execucao {r['id']} (Job {r['job_id']}) excedeu {tempo_limite_horas}h. Abortando...")
                     backup_engine.abortar_backup(r['job_id'])
                     cursor.execute("""
                         UPDATE execucoes 
@@ -116,11 +119,13 @@ def verificar_timeouts_jobs(tempo_limite_horas=12):
                         WHERE id=?
                     """, (agora.isoformat(), f"Backup cancelado e abortado automaticamente após exceder o tempo limite de {tempo_limite_horas} horas.", r['id']))
             except Exception as e:
-                print(f"[Timeout Watchdog] Erro ao checar tempo da execucao {r['id']}: {e}")
+                app_logger.error(f"[Timeout Watchdog] Erro ao checar tempo da execucao {r['id']}: {e}")
         conn.commit()
-        conn.close()
     except Exception as e:
-        print(f"[Timeout Watchdog] Erro na rotina de verificação: {e}")
+        app_logger.error(f"[Timeout Watchdog] Erro na rotina de verificação: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def carregar_todos_jobs():
@@ -128,7 +133,7 @@ def carregar_todos_jobs():
     jobs = models.listar_jobs()
     for job in jobs:
         agendar_job(job)
-    print(f"[Scheduler] {len(jobs)} jobs carregados.")
+    app_logger.info(f"[Scheduler] {len(jobs)} jobs carregados.")
     
     try:
         scheduler = get_scheduler()
@@ -142,7 +147,7 @@ def carregar_todos_jobs():
         )
         verificar_timeouts_jobs()
     except Exception as e:
-        print(f"[Scheduler] Erro ao iniciar watchdog de timeouts: {e}")
+        app_logger.error(f"[Scheduler] Erro ao iniciar watchdog de timeouts: {e}")
 
 
 def listar_proximas_execucoes():

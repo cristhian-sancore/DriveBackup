@@ -68,13 +68,13 @@ def init_db():
         );
     """)
 
-    # Configurações padrão
+    # Configurações padrão (sem segredos hardcoded)
     defaults = {
         "google_json_path": "",
-        "evolution_url": "https://chatapi.fassilcloud.net/",
-        "evolution_instance": "SIA",
-        "evolution_apikey": "C9C8966DDB42-4BA9-9428-372BE0AE3382",
-        "whatsapp_destino": "5565996772226",
+        "evolution_url": os.environ.get("EVOLUTION_URL", ""),
+        "evolution_instance": os.environ.get("EVOLUTION_INSTANCE", ""),
+        "evolution_apikey": os.environ.get("EVOLUTION_APIKEY", ""),
+        "whatsapp_destino": os.environ.get("WHATSAPP_DESTINO", ""),
         "porta_servidor": "5555",
         "git_repo_url": "https://github.com/cristhian-sancore/DriveBackup"
     }
@@ -298,50 +298,30 @@ def salvar_config(dados):
 
 def detectar_e_atualizar_google_json():
     """
-    Varre a pasta data e a raiz em busca de arquivos JSON de credenciais.
-    Prioriza Service Account. Caso não haja credenciais, cria o client_secret padrão
-    sozinho, sem exigir que o usuário insira o arquivo manualmente.
+    Varre a pasta data e a raiz em busca de arquivos JSON de credenciais do Google
+    (OAuth client_secret ou Service Account) sem armazenar segredos no código-fonte.
     """
     import shutil
     config = obter_config()
-    
-    os.makedirs(DATA_DIR, exist_ok=True)
-    
-    # Credencial OAuth embutida para criar sozinho sem depender do usuário:
-    DEFAULT_OAUTH_PATH = os.path.join(DATA_DIR, "client_secret_default.json")
-    if not os.path.exists(DEFAULT_OAUTH_PATH):
-        try:
-            default_secret = {
-              "web": {
-                "client_id": "359821610078-j3n0u8294af7a0ghih10j1a1hoo90lk8.apps.googleusercontent.com",
-                "project_id": "macro-tributary-468319-u4",
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_secret": "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",
-                "redirect_uris": ["http://localhost:7777/", "http://localhost:5555/"]
-              }
-            }
-            with open(DEFAULT_OAUTH_PATH, 'w', encoding='utf-8') as df:
-                json.dump(default_secret, df, indent=4)
-        except Exception as e:
-            print("Erro ao criar token default:", e)
 
-    # Busca jsons na raiz e joga na pasta data se for Service Account
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    # Busca jsons na raiz e copia para a pasta data se for Service Account ou OAuth
     try:
         for f in os.listdir(BASE_DIR):
-            if f.endswith(".json") and f not in ["package.json"]:
+            if f.endswith(".json") and f not in ["package.json", "version.json"]:
                 src = os.path.join(BASE_DIR, f)
                 dst = os.path.join(DATA_DIR, f)
                 if not os.path.exists(dst) and os.path.isfile(src):
                     try:
                         with open(src, 'r', encoding='utf-8') as file:
                             dados = json.load(file)
-                            if dados.get("type") == "service_account":
+                            if dados.get("type") == "service_account" or "web" in dados or "installed" in dados:
                                 shutil.copy2(src, dst)
-                    except:
+                    except Exception:
                         pass
-    except Exception: pass
+    except Exception:
+        pass
 
     caminho_salvo = config.get("google_json_path")
     # Se o caminho no banco não existe mais, reseta o valor para não dar FileNotFoundError

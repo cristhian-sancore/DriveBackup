@@ -29,6 +29,7 @@ _lock = threading.Lock()
 # Sistema de fila sequencial
 import queue
 _fila_backup = queue.Queue()
+_jobs_na_fila = set()
 _worker_ativo = False
 _worker_lock = threading.Lock()
 _abort_flags = {}  # job_id -> threading.Event()
@@ -107,6 +108,7 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
         raise ValueError(f"As origens ('{origens_str}') estao vazias ou inacessiveis. Nenhum arquivo encontrado.")
     
     processados = 0
+    ignorados = 0
     caminhos = [c.strip() for c in origens_str.split('|') if c.strip()]
 
     with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -137,6 +139,7 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
                             if not chunk: break
                             dest.write(chunk)
                 except (PermissionError, OSError) as e:
+                    ignorados += 1
                     log(f"[ZIP] Nao foi possivel compactar {caminho_origem}: {e}")
                 
                 processados += 1
@@ -175,6 +178,7 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
                                     if not chunk: break
                                     dest.write(chunk)
                         except (PermissionError, OSError) as e:
+                            ignorados += 1
                             log(f"[ZIP] Nao foi possivel compactar {caminho_completo}: {e}")
                         
                         processados += 1
@@ -194,7 +198,7 @@ def compactar_pasta(origens_str, caminho_zip, job_id=None, inicio=None):
             raise ValueError(f"Arquivo ZIP corrompido! Primeiro arquivo com erro: {resultado}")
     log(f"[ZIP] Integridade OK!")
     
-    return caminho_zip, total_arquivos, tamanho
+    return caminho_zip, total_arquivos, tamanho, ignorados
 
 
 def verificar_espaco_disco(caminho, tamanho_necessario):
@@ -335,12 +339,12 @@ def executar_backup(job_id):
         _set_progresso(job_id, "compactando", 0, "Iniciando compressao...")
         log(f"[Backup] Compactando: {job['pasta_origem']}")
 
-        caminho_zip, total_arquivos, tamanho_zip = compactar_pasta(
+        caminho_zip, total_arquivos, tamanho_zip, arquivos_ignorados = compactar_pasta(
             job["pasta_origem"], caminho_zip_temp, job_id, inicio
         )
         _verificar_timeout(inicio, job_id)  # Verifica timeout após compactação
 
-        log(f"[Backup] ZIP criado: {caminho_zip} ({tamanho_zip} bytes, {total_arquivos} arquivos)")
+        log(f"[Backup] ZIP criado: {caminho_zip} ({tamanho_zip} bytes, {total_arquivos} arquivos, {arquivos_ignorados} ignorados)")
 
         destino_usado = job["destino_tipo"]
 
@@ -384,16 +388,19 @@ def executar_backup(job_id):
 
         # ===== ETAPA 4: Finalizar =====
         duracao = time.time() - inicio
-        _set_progresso(job_id, "concluido", 100, "Backup concluido com sucesso!")
+        msg_final = "Backup concluido com sucesso"
+        if arquivos_ignorados > 0:
+            msg_final = f"Backup concluido com avisos: {arquivos_ignorados} arquivo(s) bloqueado(s)/inacessivel(is) ignorado(s)"
+        _set_progresso(job_id, "concluido", 100, msg_final)
 
-        models.registrar_fim(exec_id, "sucesso", tamanho_zip, total_arquivos,
-                           destino_usado, "Backup concluido com sucesso")
+        models.registrar_fim(exec_id, "sucesso", tamanho_zip, total_arquivos - arquivos_ignorados,
+                           destino_usado, msg_final)
 
         # Notifica WhatsApp
         try:
             notificador.notificar_sucesso(
                 config, job["nome"], job["pasta_origem"],
-                destino_usado, tamanho_zip, total_arquivos, duracao
+                destino_usado, tamanho_zip, total_arquivos - arquivos_ignorados, duracao
             )
         except Exception as ne:
             log(f"[Backup] Erro ao notificar WhatsApp: {ne}")
@@ -418,7 +425,7 @@ def executar_backup(job_id):
 
         # Notifica timeout no WhatsApp
         try:
-            notificador.notificar_timeout(config, job["nome"], duracao_min)
+            notificador.notificar_timeout(config, job["nome"], duracao_min, limite_horas=TIMEOUT_BACKUP_SEGUNDOS // 3600)
         except Exception as ne:
             log(f"[Backup] Erro ao notificar WhatsApp (timeout): {ne}")
 
@@ -475,7 +482,9 @@ def _worker_fila():
         except queue.Empty:
             break
         
-        _job_em_execucao = job_id
+        with _worker_lock:
+            _jobs_na_fila.discard(job_id)
+            _job_em_execucao = job_id
         _abort_flags[job_id] = threading.Event()
         
         log(f"[Fila] Iniciando backup do job {job_id} (restam {_fila_backup.qsize()} na fila)")
@@ -483,18 +492,22 @@ def _worker_fila():
         _fila_backup.task_done()
     with _worker_lock:
         _worker_ativo = False
-    _job_em_execucao = None
+        _job_em_execucao = None
     log("[Fila] Todos os backups da fila foram concluidos.")
 
 
 def executar_backup_async(job_id):
-    """Adiciona o job na fila de backups. Se o worker não estiver rodando, inicia."""
+    """Adiciona o job na fila de backups sem duplicar se já estiver rodando ou na fila."""
     global _worker_ativo
     
-    _fila_backup.put(job_id)
-    log(f"[Fila] Job {job_id} adicionado a fila (posicao: {_fila_backup.qsize()})")
-    
     with _worker_lock:
+        if job_id == _job_em_execucao or job_id in _jobs_na_fila:
+            log(f"[Fila] Job {job_id} ja esta em execucao ou aguardando na fila. Ignorando duplicata.")
+            return None
+        _jobs_na_fila.add(job_id)
+        _fila_backup.put(job_id)
+        log(f"[Fila] Job {job_id} adicionado a fila (posicao: {_fila_backup.qsize()})")
+        
         if not _worker_ativo:
             _worker_ativo = True
             t = threading.Thread(target=_worker_fila, daemon=True)
@@ -514,17 +527,20 @@ def abortar_backup(job_id):
 
 def abortar_todos_os_backups():
     """Aborta todos os backups em andamento ou na fila durante parada ou reinício do serviço."""
-    while not _fila_backup.empty():
-        try:
-            _fila_backup.get_nowait()
-            _fila_backup.task_done()
-        except:
-            break
+    with _worker_lock:
+        _jobs_na_fila.clear()
+        while not _fila_backup.empty():
+            try:
+                _fila_backup.get_nowait()
+                _fila_backup.task_done()
+            except Exception:
+                break
             
     for job_id, event in list(_abort_flags.items()):
         event.set()
         log(f"[Shutdown] Sinal de abort enviado forçadamente para o job {job_id}")
         
+    conn = None
     try:
         conn = models.get_db()
         conn.execute("""
@@ -533,9 +549,11 @@ def abortar_todos_os_backups():
             WHERE status='em_andamento'
         """, (datetime.now().isoformat(),))
         conn.commit()
-        conn.close()
     except Exception as e:
         log(f"[Shutdown] Erro ao atualizar status no banco: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def obter_job_em_execucao():

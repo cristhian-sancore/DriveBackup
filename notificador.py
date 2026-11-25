@@ -3,6 +3,9 @@ notificador.py - Envio de notificações via WhatsApp (Evolution API)
 """
 import requests
 from datetime import datetime
+from logger import app_logger
+from logger import app_logger
+from logger import app_logger
 
 
 def enviar_whatsapp(config, mensagem):
@@ -119,15 +122,16 @@ def notificar_auth_necessaria(config):
     return enviar_whatsapp(config, msg)
 
 
-def notificar_timeout(config, job_nome, duracao_min):
+def notificar_timeout(config, job_nome, duracao_min, limite_horas=12):
     """Envia notificação de que o backup excedeu o limite de tempo (timeout)."""
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    limite_min = limite_horas * 60
     msg = (
         f"⏰ *BACKUP TIMEOUT* ⚠️\n\n"
         f"*Job:* {job_nome}\n"
         f"*Tempo decorrido:* {duracao_min:.0f} minutos\n"
-        f"*Limite:* 60 minutos\n\n"
-        f"O backup foi *cancelado automaticamente* porque excedeu o limite de 1 hora.\n"
+        f"*Limite:* {limite_horas}h ({limite_min} minutos)\n\n"
+        f"O backup foi *cancelado automaticamente* porque excedeu o limite de {limite_horas} horas.\n"
         f"Isso pode indicar problemas de rede, disco lento ou arquivo muito grande.\n\n"
         f"_Verifique o painel e os logs para mais detalhes._\n"
         f"*Data:* {agora}"

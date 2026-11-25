@@ -9,11 +9,13 @@ from logger import app_logger
 import sys
 import json
 import time
+import secrets
+import hashlib
 import threading
 import atexit
 import signal
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, session, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import models
@@ -29,7 +31,10 @@ def get_resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if getattr(sys, 'frozen', False):
     template_dir = get_resource_path('templates')
@@ -45,6 +50,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 import uuid
 def _obter_secret_key():
     """Busca ou gera a secret_key única desta instalação."""
+    conn = None
     try:
         conn = models.get_db()
         row = conn.execute("SELECT valor FROM configuracao WHERE chave='secret_key'").fetchone()
@@ -54,10 +60,12 @@ def _obter_secret_key():
             key = str(uuid.uuid4()) + str(uuid.uuid4())
             conn.execute("INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('secret_key', ?)", (key,))
             conn.commit()
-        conn.close()
         return key
-    except:
+    except Exception:
         return str(uuid.uuid4())  # Fallback se o banco ainda não existir
+    finally:
+        if conn:
+            conn.close()
 
 models.init_db()
 
@@ -79,9 +87,28 @@ except:
 
 app.secret_key = _obter_secret_key()
 
-# Suporte a reverse proxy (Cloudflare Tunnel, Nginx, etc.)
-from werkzeug.middleware.proxy_fix import ProxyFix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# ========================
+# PROTEÇÃO CSRF
+# ========================
+
+def _gerar_csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": _gerar_csrf_token}
+
+@app.before_request
+def verificar_csrf():
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        token_sessao = session.get("csrf_token")
+        token_req = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
+        if not token_sessao or not token_req or not secrets.compare_digest(str(token_sessao), str(token_req)):
+            if request.path.startswith("/api/") or request.path.startswith("/settings/testar"):
+                return jsonify({"ok": False, "erro": "Token CSRF inválido ou ausente.", "mensagem": "Sessão expirada. Recarregue a página."}), 403
+            abort(403)
 
 # ========================
 # LOGIN & AUTENTICAÇÃO
@@ -118,25 +145,20 @@ def login():
     if request.method == "POST":
         senha = request.form.get("senha", "")
         
-        # Obtém a senha do banco (ou cria a padrão 'f@$p3l')
+        # Obtém a senha do banco (ou cria o hash padrão 'f@$p3l' no primeiro boot)
         conn = models.get_db()
-        row = conn.execute("SELECT valor FROM configuracao WHERE chave='senha_admin'").fetchone()
-        if row and row['valor']:
-            senha_hash = row['valor']
-        else:
-            senha_hash = generate_password_hash("f@$p3l")
-            conn.execute("INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('senha_admin', ?)", (senha_hash,))
-            conn.commit()
-        conn.close()
-
-        if check_password_hash(senha_hash, senha) or senha == "f@$p3l": # Fallback temporário para transição
-            # Atualiza o hash se ele usou a senha em texto puro por segurança
-            if senha == "f@$p3l":
-                conn = models.get_db()
-                conn.execute("UPDATE configuracao SET valor=? WHERE chave='senha_admin'", (generate_password_hash("f@$p3l"),))
+        try:
+            row = conn.execute("SELECT valor FROM configuracao WHERE chave='senha_admin'").fetchone()
+            if row and row['valor']:
+                senha_hash = row['valor']
+            else:
+                senha_hash = generate_password_hash("f@$p3l")
+                conn.execute("INSERT OR REPLACE INTO configuracao (chave, valor) VALUES ('senha_admin', ?)", (senha_hash,))
                 conn.commit()
-                conn.close()
-                
+        finally:
+            conn.close()
+
+        if check_password_hash(senha_hash, senha):
             session["logged_in"] = True
             _login_attempts.pop(ip_cliente, None) # Reseta tentativas com sucesso
             flash("Login realizado com sucesso!", "success")
@@ -348,15 +370,32 @@ def fila_jobs():
 @login_required
 def settings_view():
     if request.method == "POST":
+        config_atual = models.obter_config()
         dados = {
-            "google_json_path": request.form.get("google_json_path", "").strip(),
             "evolution_url": request.form.get("evolution_url", "").strip(),
             "evolution_instance": request.form.get("evolution_instance", "").strip(),
-            "evolution_apikey": request.form.get("evolution_apikey", "").strip(),
             "whatsapp_destino": request.form.get("whatsapp_destino", "").strip(),
             "git_repo_url": request.form.get("git_repo_url", "").strip(),
-            "git_token": request.form.get("git_token", "").strip(),
         }
+        # Preserva google_json_path caso o campo não esteja no formulário
+        if "google_json_path" in request.form:
+            dados["google_json_path"] = request.form.get("google_json_path", "").strip()
+        else:
+            dados["google_json_path"] = config_atual.get("google_json_path", "")
+
+        # Só atualiza chaves secretas se o usuário preencher um novo valor
+        nova_apikey = request.form.get("evolution_apikey", "").strip()
+        if nova_apikey:
+            dados["evolution_apikey"] = nova_apikey
+        else:
+            dados["evolution_apikey"] = config_atual.get("evolution_apikey", "")
+
+        novo_git_token = request.form.get("git_token", "").strip()
+        if novo_git_token:
+            dados["git_token"] = novo_git_token
+        else:
+            dados["git_token"] = config_atual.get("git_token", "")
+
         models.salvar_config(dados)
         flash("Configurações salvas!", "success")
         return redirect(url_for("settings_view"))
@@ -391,11 +430,6 @@ def testar_whatsapp():
 def api_sistema_ping():
     """Endpoint simples para verificar se o sistema voltou."""
     return jsonify({"ok": True})
-
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def obter_versao_local():
     """Retorna o SHA do último commit baixado."""
@@ -486,20 +520,39 @@ def api_sistema_atualizar():
             base_dir = os.path.dirname(os.path.abspath(__file__))
             
         exe_path = os.path.join(base_dir, "BKP_FASPEL_Setup.exe")
+        exe_tmp_path = exe_path + ".tmp"
         
-        response = requests.get(exe_url, stream=True, timeout=60)
+        response = requests.get(exe_url, headers=headers, stream=True, timeout=60)
         if response.status_code != 200:
             return jsonify({"ok": False, "mensagem": f"Erro ao baixar arquivo ({response.status_code})"})
             
-        with open(exe_path, 'wb') as f:
+        sha256 = hashlib.sha256()
+        total_bytes = 0
+        with open(exe_tmp_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+                if chunk:
+                    f.write(chunk)
+                    sha256.update(chunk)
+                    total_bytes += len(chunk)
+
+        # Verifica se o arquivo baixado é um executável PE válido (MZ) e não um ponteiro Git LFS ou HTML
+        with open(exe_tmp_path, 'rb') as f:
+            magic = f.read(2)
+        if total_bytes < 1024 * 100 or magic != b"MZ":
+            try:
+                os.remove(exe_tmp_path)
+            except OSError:
+                pass
+            return jsonify({"ok": False, "mensagem": "Arquivo baixado inválido (possível ponteiro Git LFS ou resposta inesperada)."})
+
+        os.replace(exe_tmp_path, exe_path)
         
         # 3. Salva o novo SHA localmente
         if latest_sha:
             version_file = os.path.join(base_dir, "data", "version.json")
+            os.makedirs(os.path.dirname(version_file), exist_ok=True)
             with open(version_file, 'w') as f:
-                json.dump({"sha": latest_sha, "date": datetime.now().isoformat()}, f)
+                json.dump({"sha": latest_sha, "sha256_exe": sha256.hexdigest(), "date": datetime.now().isoformat()}, f)
             
         return jsonify({"ok": True, "atualizado": True, "mensagem": "Novo executável baixado! Clique em 'Reiniciar' para aplicar."})
     except Exception as e:
@@ -812,7 +865,7 @@ def api_progresso(job_id):
         while True:
             prog = backup_engine.get_progresso(job_id)
             yield f"data: {json.dumps(prog)}\n\n"
-            if prog["etapa"] in ("concluido", "erro", "idle"):
+            if prog["etapa"] in ("concluido", "erro", "idle", "abortado", "timeout"):
                 break
             time.sleep(1)
 
@@ -952,4 +1005,8 @@ if __name__ == "__main__":
     porta = int(config.get("porta_servidor", 5555))
     app_logger.info(f"  Painel: http://localhost:{porta}")
     app_logger.info("=" * 50)
-    app.run(host="0.0.0.0", port=porta, debug=False)
+    try:
+        from waitress import serve
+        serve(app, host="0.0.0.0", port=porta, threads=8)
+    except ImportError:
+        app.run(host="0.0.0.0", port=porta, debug=False, threaded=True)

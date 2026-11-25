@@ -51,8 +51,8 @@
                 <div class="form-group">
                     <label for="evolution_apikey"><i class="fas fa-lock"></i> API Key</label>
                     <input type="password" id="evolution_apikey" name="evolution_apikey" class="form-control"
-                           placeholder="Chave de API"
-                           value="{{ config.get('evolution_apikey', '') }}">
+                           placeholder="{{ '•••••••• (configurado - deixe em branco para manter)' if config.get('evolution_apikey') else 'Chave de API' }}"
+                           value="">
                 </div>
                 <div class="form-group">
                     <label for="whatsapp_destino"><i class="fas fa-phone"></i> Número de Destino</label>
@@ -86,8 +86,8 @@
                 <div class="form-group" style="margin-bottom: 20px;">
                     <label for="git_token"><i class="fas fa-lock"></i> Token de Acesso GitHub (Personal Access Token)</label>
                     <input type="password" id="git_token" name="git_token" class="form-control"
-                           placeholder="ghp_xxxxxxxxxxxx"
-                           value="{{ config.get('git_token', '') }}">
+                           placeholder="{{ '•••••••• (configurado - deixe em branco para manter)' if config.get('git_token') else 'ghp_xxxxxxxxxxxx' }}"
+                           value="">
                     <small class="form-hint">Necessário para baixar atualizações de repositórios privados.</small>
                 </div>
                 <div class="action-item">
